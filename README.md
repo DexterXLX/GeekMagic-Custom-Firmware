@@ -7,8 +7,7 @@
 
 A custom modern firmware specifically designed and tested for the **GeekMagic Small TV** (and Ultra variants) desktop gadgets featuring an ESP8266 processor and a 240x240 ST7789 display.
 
-![UI Preview](ui-preview.png) *(Placeholder: Add your ui-preview.png here)*
-
+![UI Preview](ui-preview.png)
 ---
 
 ## ✨ Features
