@@ -11,6 +11,7 @@
 #include <TFT_eSPI.h>
 #include <AnimatedGIF.h>
 #include <time.h>
+#include <strings.h>
 #include <new>
 #include "settings.h"
 #include "webui.h"
@@ -49,10 +50,11 @@ int lastMin = -1, lastSec = -1, gifOffX = 0, gifOffY = 0;
 int lastDay = -1;
 
 // mqtt
-char tStatus[64], tState[64], tBrt[64], tBrtSet[64], tPageSet[64];
+char tStatus[64], tState[64], tBrt[64], tBrtSet[64], tPageSet[64], tGifNext[64];
 uint32_t mqttNext = 0, mqttPub = 0;
 
 void setPage(uint8_t p);
+bool validGifName(const String& n);
 
 // ------------------------------------------------------------------ crash-loop guard
 // Counts boots in RTC memory (survives crashes, watchdog and reset-button, not power loss).
@@ -434,6 +436,72 @@ static void drawInfo(uint8_t st) {
   }
 }
 
+// Styles 3..5: stacked (hours over minutes), day progress, glance (weather strip + clock).
+static void renderClockExtra(uint8_t st, const struct tm& t, bool full) {
+  int h = t.tm_hour;
+  if (!cfg.h24) { h %= 12; if (!h) h = 12; }
+  bool newMin = (t.tm_min != lastMin);
+  bool newWx = (full || wxVer != lastWxVer);
+  char db[24], tb[8], ib[40];
+  snprintf(db, sizeof db, "%s, %s %d", WD[t.tm_wday], MO[t.tm_mon], t.tm_mday);
+  const char* ampm = t.tm_hour < 12 ? "AM" : "PM";
+  if (st == 3) {                                              // stacked
+    if (newMin) {
+      lastMin = t.tm_min;
+      snprintf(tb, sizeof tb, cfg.h24 ? "%02d" : "%d", h);
+      drawText(F_TIME, tb, 120, 88, AL_C, cText, cBg, 150);
+      snprintf(tb, sizeof tb, "%02d", t.tm_min);
+      drawText(F_TIME, tb, 120, 162, AL_C, cAccent, cBg, 150);
+      if (!cfg.h24) drawText(F_CAP, ampm, 222, 162, AL_R, cDim, cBg);
+      if (cfg.showDate) drawText(F_TXT, db, 120, 206, AL_C, cDim, cBg, 200);
+    }
+    if (cfg.showInfo && newWx) {
+      lastWxVer = wxVer;
+      if (wx.valid) snprintf(ib, sizeof ib, "%d%c%c  %c  %d%%", (int)roundf(wx.temp), 0xB0, cfg.fahrenheit ? 'F' : 'C', 0xB7, wx.hum);
+      else strcpy(ib, "--");
+      drawText(F_TXT, ib, 120, 231, AL_C, cDim, cBg, 200);
+    }
+    return;
+  }
+  if (st == 4) {                                              // day progress
+    if (newMin) {
+      lastMin = t.tm_min;
+      if (cfg.h24) snprintf(tb, sizeof tb, "%02d:%02d", h, t.tm_min); else snprintf(tb, sizeof tb, "%d:%02d", h, t.tm_min);
+      drawText(F_TIME, tb, 120, 98, AL_C, cText, cBg, 212);
+      if (cfg.showDate) drawText(F_TXT, db, 120, 140, AL_C, cDim, cBg, 190);
+      if (!cfg.h24) drawText(F_CAP, ampm, 224, 140, AL_R, cDim, cBg);
+      float frac = (t.tm_hour * 60 + t.tm_min) / 1440.0f;
+      int fw = max(12, (int)(192 * frac));
+      drawRRect(24, 170, 192, 12, 6, cTrack, cBg);
+      drawRRect(24, 170, fw, 12, 6, cAccent, cTrack);
+      drawText(F_CAP, "TODAY", 24, 210, AL_L, cDim, cBg);
+      snprintf(ib, sizeof ib, "%d%%", (int)(frac * 100));
+      drawText(F_TXT, ib, 216, 212, AL_R, cText, cBg, 60);
+    }
+    return;
+  }
+  // st == 5: glance
+  if (newWx) {
+    lastWxVer = wxVer;
+    if (wx.valid) {
+      drawIcon(*wxIcon(wx.code, wx.isDay), 30, 36, 32, cBg);
+      snprintf(ib, sizeof ib, "%d%c", (int)roundf(wx.temp), 0xB0);
+      drawText(F_VAL, ib, 54, 50, AL_L, cText, cBg, 60);
+      drawText(F_TXT, wxShort(wx.code, wx.isDay), 228, 48, AL_R, cDim, cBg, 120);
+      snprintf(ib, sizeof ib, "High %d%c    Low %d%c", (int)roundf(wx.hi), 0xB0, (int)roundf(wx.lo), 0xB0);
+      drawText(F_TXT, ib, 120, 226, AL_C, cDim, cBg, 220);
+    } else drawText(F_TXT, "--", 54, 48, AL_L, cDim, cBg, 60);
+    tft.fillRect(20, 68, 200, 1, cTrack);
+  }
+  if (newMin) {
+    lastMin = t.tm_min;
+    if (cfg.h24) snprintf(tb, sizeof tb, "%02d:%02d", h, t.tm_min); else snprintf(tb, sizeof tb, "%d:%02d", h, t.tm_min);
+    drawText(F_TIME, tb, 120, 140, AL_C, cText, cBg, 212);
+    if (cfg.showDate) drawText(F_TXT, db, 120, 184, AL_C, cAccent, cBg, 190);
+    if (!cfg.h24) drawText(F_CAP, ampm, 224, 184, AL_R, cDim, cBg);
+  }
+}
+
 void renderClock() {
   static bool syncing = false;
   if (!timeValid()) {
@@ -444,7 +512,7 @@ void renderClock() {
   if (syncing) { syncing = false; fullRedraw = true; }
   time_t now = time(nullptr); struct tm t; localtime_r(&now, &t);
   if (t.tm_mday != lastDay) { lastDay = t.tm_mday; fullRedraw = true; }
-  uint8_t st = cfg.clockStyle > 2 ? 0 : cfg.clockStyle;
+  uint8_t st = cfg.clockStyle > 5 ? 0 : cfg.clockStyle;
   bool cards = (st == 2), info = cfg.showInfo;
   uint16_t panel = cards ? cPanel : cBg;
   bool full = fullRedraw;
@@ -456,6 +524,7 @@ void renderClock() {
       if (info) { drawRRect(6, 158, 110, 76, 22, cPanel, cBg); drawRRect(124, 158, 110, 76, 22, cPanel, cBg); }
     }
   }
+  if (st >= 3) { renderClockExtra(st, t, full); return; }
   int tBase = info ? (cards ? 88 : 98) : 130;
   int dBase = info ? (cards ? 130 : 140) : (cards ? 172 : 176);
   if (t.tm_min != lastMin) {
@@ -480,6 +549,27 @@ void renderClock() {
 
 // ------------------------------------------------------------------ weather
 // Styles: 0 forecast (now + 3 days), 1 card. Redrawn only when new data arrives or the page appears.
+// Horizontal blue-to-orange bar with rounded ends (temperature range).
+static void drawGradBar(int x, int y, int w, int h, uint16_t bg) {
+  int r = h / 2;
+  tft.startWrite();
+  tft.setAddrWindow(x, y, w, h);
+  for (int i = 0; i < h; i++) {
+    for (int j = 0; j < w; j++) {
+      int f = (j * 255) / (w - 1);
+      uint16_t c = C565(60 + (195 * f) / 255, 150, 255 - (215 * f) / 255);
+      float cov = 1;
+      if (j < r || j >= w - r) {
+        float cx = (j < r) ? r : w - r, dx = j + 0.5f - cx, dy = i + 0.5f - r;
+        cov = r - sqrtf(dx * dx + dy * dy) + 0.5f;
+      }
+      rowBuf[j] = (cov <= 0) ? bg : (cov >= 1) ? c : mix565(bg, c, (uint8_t)(cov * 15 + 0.5f));
+    }
+    tft.pushPixels(rowBuf, w);
+  }
+  tft.endWrite();
+}
+
 void renderWeather() {
   if (!fullRedraw && !wxDirty) return;
   fullRedraw = false; wxDirty = false;
@@ -508,6 +598,58 @@ void renderWeather() {
       drawText(F_TXT, pt[i], x + 9, 194, AL_L, pc[i], pb);
       x += pw[i] + 6;
     }
+    return;
+  }
+  if (cfg.weatherStyle == 2) {                                   // tiles
+    drawText(F_TXT, wxShort(wx.code, wx.isDay), 120, 24, AL_C, cDim, cBg);
+    drawIcon(*wxIcon(wx.code, wx.isDay), 50, 64, 64, cBg);
+    snprintf(tb, sizeof tb, "%d%c", (int)roundf(wx.temp), 0xB0);
+    if (textW(F_TIME, tb) > 146) tb[strlen(tb) - 1] = 0;
+    drawText(F_TIME, tb, 160, 92, AL_C, cText, cBg);
+    char unit[3] = {(char)0xB0, cfg.fahrenheit ? 'F' : 'C', 0};
+    char val[4][8];
+    snprintf(val[0], 8, "%d", wx.hum); snprintf(val[1], 8, "%d", (int)roundf(wx.wind));
+    snprintf(val[2], 8, "%d", (int)roundf(wx.hi)); snprintf(val[3], 8, "%d", (int)roundf(wx.lo));
+    const Icon* ti[4] = {&IC_DROP, &IC_WIND, &IC_THERMO, &IC_THERMO};
+    int32_t tov[4] = {-1, -1, C565(255, 159, 10), C565(100, 210, 255)};
+    const char* tl[4] = {"HUMIDITY", "WIND", "HIGH", "LOW"};
+    const char* tu[4] = {"%", cfg.fahrenheit ? "mph" : "km/h", unit, unit};
+    const char* tc[4] = {"%", cfg.fahrenheit ? "MPH" : "KM/H", unit, unit};
+    for (int i = 0; i < 4; i++) {
+      int x = (i & 1) ? 124 : 6, y = (i >> 1) ? 174 : 110;
+      drawRRect(x, y, 110, 60, 20, cPanel, cBg);
+      drawIcon(*ti[i], x + 20, y + 15, 16, cPanel, tov[i]);
+      drawText(F_CAP, tl[i], x + 34, y + 19, AL_L, cDim, cPanel);
+      int w = drawText(F_VAL, val[i], x + 14, y + 54, AL_L, cText, cPanel);
+      bool tight = (w + 3 + textW(F_TXT, tu[i]) > 90);          // long units fall back to the small caps font
+      drawText(tight ? F_CAP : F_TXT, tight ? tc[i] : tu[i], x + 14 + w + 3, y + 54, AL_L, cDim, cPanel);
+    }
+    return;
+  }
+  if (cfg.weatherStyle == 3) {                                   // range: where "now" sits between today's low and high
+    drawIcon(*wxIcon(wx.code, wx.isDay), 30, 30, 32, cBg);
+    drawText(F_TXT, wxShort(wx.code, wx.isDay), 54, 38, AL_L, cDim, cBg);
+    snprintf(tb, sizeof tb, "%d%c", (int)roundf(wx.temp), 0xB0);
+    if (textW(F_TIME, tb) > 146) tb[strlen(tb) - 1] = 0;
+    drawText(F_TIME, tb, 120, 114, AL_C, cText, cBg);
+    drawGradBar(24, 134, 192, 12, cBg);
+    float pos = (wx.hi > wx.lo) ? (wx.temp - wx.lo) / (wx.hi - wx.lo) : 0.5f;
+    pos = constrain(pos, 0.0f, 1.0f);
+    int mx = 24 + (int)(pos * 192), my = 140;
+    tft.fillCircle(mx, my, 9, cBg);
+    drawRRect(mx - 6, my - 6, 12, 12, 6, cText, cBg);
+    snprintf(tb, sizeof tb, "%d%c", (int)roundf(wx.lo), 0xB0);
+    drawText(F_TXT, tb, 24, 176, AL_L, cText, cBg);
+    snprintf(tb, sizeof tb, "%d%c", (int)roundf(wx.hi), 0xB0);
+    drawText(F_TXT, tb, 216, 176, AL_R, cText, cBg);
+    drawText(F_CAP, "LOW", 24, 196, AL_L, cDim, cBg);
+    drawText(F_CAP, "HIGH", 216, 196, AL_R, cDim, cBg);
+    drawIcon(IC_DROP, 34, 221, 16, cBg);
+    snprintf(tb, sizeof tb, "%d%%", wx.hum);
+    drawText(F_TXT, tb, 48, 228, AL_L, cText, cBg);
+    drawIcon(IC_WIND, 124, 221, 16, cBg);
+    snprintf(tb, sizeof tb, "%d %s", (int)roundf(wx.wind), cfg.fahrenheit ? "mph" : "km/h");
+    drawText(F_TXT, tb, 138, 228, AL_L, cText, cBg);
     return;
   }
   // forecast
@@ -561,6 +703,8 @@ void renderStats() {
 
 // ------------------------------------------------------------------ GIF player
 static File gifFile;
+static uint32_t gifStartMs = 0;
+static bool gifSwitchPending = false;
 void* GIFOpen(const char* fname, int32_t* pSize) {
   gifFile = LittleFS.open(fname, "r");
   if (!gifFile) return nullptr;
@@ -635,19 +779,67 @@ bool startGif() {
   gifOffX = max(0, (240 - gif->getCanvasWidth()) / 2);
   gifOffY = max(0, (240 - gif->getCanvasHeight()) / 2);
   tft.fillScreen(TFT_BLACK);
-  gifNext = 0;
+  gifNext = 0; gifStartMs = millis(); gifSwitchPending = false;
   return true;
+}
+
+// ---- GIF playlist: all GIFs in alphabetical order; "next" wraps around.
+static int listGifs(char names[][32], int maxN) {
+  int n = 0;
+  const char* dirs[] = {GIF_DIR, GIF_DIR2};
+  for (const char* dn : dirs) {
+    Dir dir = LittleFS.openDir(dn);
+    while (dir.next() && n < maxN) {
+      String nm = dir.fileName();
+      if (!dir.isFile() || !validGifName(nm)) continue;
+      bool dup = false;
+      for (int i = 0; i < n; i++) if (strcasecmp(names[i], nm.c_str()) == 0) dup = true;
+      if (!dup) { strlcpy(names[n], nm.c_str(), 32); n++; }
+    }
+  }
+  for (int i = 1; i < n; i++) {                       // insertion sort
+    char tmp[32]; strcpy(tmp, names[i]); int j = i - 1;
+    while (j >= 0 && strcasecmp(names[j], tmp) > 0) { strcpy(names[j + 1], names[j]); j--; }
+    strcpy(names[j + 1], tmp);
+  }
+  return n;
+}
+
+// Moves to the next GIF. Returns true if a different GIF was selected (and started, when the GIF page is showing).
+bool gifAdvance(bool save) {
+  if (!fsOk) return false;
+  static char names[24][32];
+  int n = listGifs(names, 24);
+  if (n < 2) return false;
+  int cur = -1;
+  for (int i = 0; i < n; i++) if (strcasecmp(names[i], cfg.gif) == 0) cur = i;
+  for (int k = 1; k <= n; k++) {
+    int idx = (cur + k + n) % n;
+    strlcpy(cfg.gif, names[idx], sizeof cfg.gif);
+    refreshGifOk();
+    if (page != PAGE_GIF || startGif()) { if (save) saveSettings(cfg); return true; }
+  }
+  gifOk = false; setPage(PAGE_CLOCK);                 // none of them could be opened
+  return false;
 }
 
 void gifTick() {
   if (!gif || (int32_t)(millis() - gifNext) < 0) return;
+  if (gifSwitchPending) {                             // the previous GIF finished its last frame: start the next one
+    gifSwitchPending = false;
+    if (gifAdvance(false)) return;
+    if (!gif) return;
+  }
   uint32_t start = millis();
   int d = 0;
   tft.startWrite();                                   // keep the display transaction open for the whole frame
   int r = gif->playFrame(false, &d);
   tft.endWrite();
   if (r < 0) { stopGif(); gifOk = false; setPage(nextPageFrom(page)); return; }   // bad file: skip it
-  if (r == 0) gif->reset();                           // last frame shown: rewind for a seamless loop
+  if (r == 0) {                                       // last frame shown: rewind for a seamless loop
+    gif->reset();
+    if (cfg.gifAuto && (uint32_t)(millis() - gifStartMs) >= (uint32_t)cfg.gifSecs * 1000UL) gifSwitchPending = true;
+  }
   if (d < 10) d = 10;
   gifNext = start + d;                                // the frame's time includes its decode time, so loops keep the GIF's own pace
 }
@@ -676,6 +868,7 @@ void applyConfig() {
   snprintf(tBrt, sizeof tBrt, "%s/brightness", cfg.mqttTopic);
   snprintf(tBrtSet, sizeof tBrtSet, "%s/brightness/set", cfg.mqttTopic);
   snprintf(tPageSet, sizeof tPageSet, "%s/page/set", cfg.mqttTopic);
+  snprintf(tGifNext, sizeof tGifNext, "%s/gif/next", cfg.mqttTopic);
   if (cfg.mode > 0) {                                   // one page pinned
     uint8_t t = cfg.mode - 1;
     if (t == PAGE_GIF && !gifOk) t = PAGE_CLOCK;
@@ -731,6 +924,7 @@ void mqttCb(char* topic, byte* pl, unsigned len) {
   int v = atoi(b);
   if (!strcmp(topic, tBrtSet)) { cfg.brightness = constrain(v, 0, 100); applyBrightness(); publishState(); }
   else if (!strcmp(topic, tPageSet) && pageUsable(v)) setPage(v);
+  else if (!strcmp(topic, tGifNext)) { if (gifAdvance(false) && page != PAGE_GIF) setPage(PAGE_GIF); }
 }
 
 void mqttLoop(uint32_t now) {
@@ -753,6 +947,7 @@ void mqttLoop(uint32_t now) {
   mqtt.publish(tStatus, "online", true);
   mqtt.subscribe(tBrtSet);
   mqtt.subscribe(tPageSet);
+  mqtt.subscribe(tGifNext);
   if (cfg.haDiscovery) {
     discover("sensor", "temp", "Outdoor temperature", "temperature", cfg.fahrenheit ? "\xC2\xB0" "F" : "\xC2\xB0" "C", "{{ value_json.temp }}");
     discover("sensor", "rssi", "WiFi signal", "signal_strength", "dBm", "{{ value_json.rssi }}");
@@ -810,6 +1005,12 @@ void handlePage() {
   }
   setPage(n);
   if (cfg.mode != 0) { cfg.mode = n + 1; saveSettings(cfg); }   // in single-page mode, this changes the pinned page
+  sendOk();
+}
+
+void handleGifNext() {
+  if (!gifAdvance(true)) { server.send(400, "application/json", "{\"error\":\"Upload at least two GIFs first\"}"); return; }
+  if (page != PAGE_GIF) setPage(PAGE_GIF);
   sendOk();
 }
 
@@ -1028,6 +1229,7 @@ void setup() {
   server.on("/api/config", HTTP_GET, handleConfigGet);
   server.on("/api/config", HTTP_POST, handleConfigPost);
   server.on("/api/page", HTTP_POST, handlePage);
+  server.on("/api/gifnext", HTTP_POST, handleGifNext);
   server.on("/api/gifs", HTTP_GET, handleGifList);
   server.on("/api/gif", HTTP_POST, handleUploadDone, handleUpload);
   server.on("/api/gif", HTTP_DELETE, handleGifDelete);

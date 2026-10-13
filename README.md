@@ -27,15 +27,21 @@ Or run `pio run` locally.
 4. Open the address shown on the screen (Status page) or `http://smalltv.local`, set location, time zone and style.
 
 ## The look (web UI, Display tab)
-- **Clock styles:** Classic (white), Accent (your accent color), Cards (rounded cards). Optional info blocks under the clock:
-  outside temperature plus humidity, wind, or today's high. Optional date, seconds line, and 12/24 h.
-- **Weather styles:** Forecast (now + next three days, like a phone widget) and Card (big temperature with pills).
-- **Color themes:** Black, Midnight, Graphite, Light, plus your own accent color.
-- **Display mode:** rotate through pages or keep one page on screen. No header bar; optional page dots.
-- Text is drawn with a custom rounded font (Outfit Bold, SIL Open Font License) and flat icons. Everything is painted once and then
-  only changed parts are repainted, so there is no flicker or lag.
-- **GIFs:** loops now keep the GIF's own pace, and the first frame is drawn in one streamed pass, so the pause at the loop point is
-  much shorter. (A short repaint at the loop is unavoidable with this chip when the first frame is a full picture.)
+- **Clock styles (6):** Classic, Accent (your accent color), Cards, Stacked (hours over minutes), Day progress (a bar showing how much
+  of the day has passed) and Glance (weather strip on top, big clock below). Classic, Accent and Cards can show info blocks under the
+  clock: outside temperature plus humidity, wind, or today's high.
+- **Weather styles (4):** Forecast (now + next three days), Card (big temperature with pills), Tiles (humidity, wind, high, low) and
+  Range (a bar showing where "now" sits between today's low and high).
+- **Color themes:** Black, Midnight, Graphite, Light, plus your own accent color. Optional date, seconds line, page dots, 12/24 h.
+- **Display mode:** rotate through pages or keep one page on screen. No header bar.
+- Text uses real fonts (Outfit Bold for numbers and labels, Poppins Medium for text) with flat icons. Everything is painted once and
+  then only changed parts are repainted, so there is no flicker or lag.
+
+## GIFs
+- Upload as many as fit; pick one with **Use**, or press **Next GIF** to skip to the next one (alphabetical, wraps around).
+- **Play all GIFs in turn** (GIFs tab): switches to the next GIF at the end of a loop once the chosen number of seconds has passed.
+- Home Assistant / MQTT: publish anything to `<topic>/gif/next` to skip to the next GIF.
+- Loops keep the GIF's own pace and the first frame is drawn in one streamed pass, so the pause at the loop point is much shorter.
 
 ## Updating later
 The full firmware is too big to replace itself: open its `/update`, upload **SmallTV-Installer.bin**, wait, open the installer's
@@ -69,4 +75,4 @@ Garbled GIF colors: change `LITTLE_ENDIAN_PIXELS` to `BIG_ENDIAN_PIXELS` in `sta
 - The original firmware's GIFs are read from `/image` (and `/gif`). The stock WiFi file format (`{"a":ssid,"p":password}`) was inferred
   from the binary, so the automatic import is best-effort.
 - The web UI is embedded in `src/webui.h`. `src/fonts.h` and `src/icons.h` are generated files (compressed 4-bit alpha).
-- Font: Outfit Bold, copyright The Outfit Project Authors, SIL Open Font License 1.1 (rounded and resized for the display).
+- Fonts: Outfit Bold (The Outfit Project Authors) and Poppins Medium (Indian Type Foundry), both under the SIL Open Font License 1.1.

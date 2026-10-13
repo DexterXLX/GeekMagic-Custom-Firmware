@@ -112,13 +112,15 @@ dt{color:var(--dim)}dd{margin:0;text-align:right;font-variant-numeric:tabular-nu
           <option value="0">Black</option><option value="1">Midnight</option>
           <option value="2">Graphite</option><option value="3">Light</option>
         </select></label>
-      <label><span>Clock style<small>Classic, Accent color, or Cards</small></span>
+      <label><span>Clock style<small>Stacked, Day progress and Glance have their own layout</small></span>
         <select data-k="clockStyle" data-num>
           <option value="0">Classic</option><option value="1">Accent color</option><option value="2">Cards</option>
+          <option value="3">Stacked</option><option value="4">Day progress</option><option value="5">Glance</option>
         </select></label>
-      <label><span>Weather style<small>Forecast shows today plus three days</small></span>
+      <label><span>Weather style<small>Forecast: three days. Tiles and Range: details for today</small></span>
         <select data-k="weatherStyle" data-num>
           <option value="0">Forecast</option><option value="1">Card</option>
+          <option value="2">Tiles</option><option value="3">Range</option>
         </select></label>
       <label><span>Show date</span><input type="checkbox" data-k="showDate"></label>
       <label><span>Show info under the clock<small>Outside temperature and one more value</small></span><input type="checkbox" data-k="showInfo"></label>
@@ -197,6 +199,10 @@ dt{color:var(--dim)}dd{margin:0;text-align:right;font-variant-numeric:tabular-nu
   </section>
 
   <section id="gifs">
+    <fieldset><legend>Playback</legend>
+      <label><span>Play all GIFs in turn<small>Moves to the next GIF at the end of a loop</small></span><input type="checkbox" data-k="gifAuto"></label>
+      <label><span>Seconds per GIF</span><input type="number" min="3" max="3600" data-k="gifSecs" data-num></label>
+    </fieldset>
     <fieldset><legend>Your GIFs</legend>
       <ul class="files" id="files"><li class="dim">Loading…</li></ul>
       <div class="bar"><i id="fsbar"></i></div>
@@ -204,6 +210,7 @@ dt{color:var(--dim)}dd{margin:0;text-align:right;font-variant-numeric:tabular-nu
       <div class="row">
         <input type="file" id="gfile" accept=".gif,image/gif" hidden>
         <button class="btn primary" id="upbtn">Upload a GIF</button>
+        <button class="btn" id="nextgif">Next GIF &#9654;</button>
       </div>
       <p class="dim">Best results: 240×240 pixels, under 500 KB. Large or long animations play slowly on this chip.</p>
     </fieldset>
@@ -305,6 +312,7 @@ async function loadGifs(){
   }catch(e){toast(e.message)}
 }
 $('#upbtn').onclick=()=>$('#gfile').click();
+$('#nextgif').onclick=async()=>{try{await api('/api/gifnext',{method:'POST'});await loadCfg();loadGifs();toast('Next GIF')}catch(e){toast(e.message)}};
 $('#gfile').onchange=e=>{
   const f=e.target.files[0];if(!f)return;
   const fd=new FormData();fd.append('file',f,f.name);
