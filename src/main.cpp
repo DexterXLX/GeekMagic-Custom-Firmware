@@ -49,6 +49,8 @@ uint32_t bootCount = 0;
 uint32_t pageSince = 0, lastSlow = 0, lastBars = 0, gifNext = 0;
 int lastMin = -1, lastSec = -1, gifOffX = 0, gifOffY = 0;
 int lastDay = -1;
+uint8_t vClock = 0, vWeather = 0;   // faces shown right now (from the playlist item, or from the settings)
+int curSlot = 0;                    // current playlist item
 
 // mqtt
 char tStatus[64], tState[64], tBrt[64], tBrtSet[64], tPageSet[64], tGifNext[64];
@@ -138,6 +140,17 @@ bool pageUsable(uint8_t p) {
 }
 uint8_t usableCount() { uint8_t n = 0; for (uint8_t p = 0; p < PAGE_COUNT; p++) n += pageUsable(p); return n; }
 bool rotating() { return cfg.mode == 0 && usableCount() > 1; }
+bool playlistActive() { return cfg.mode == 5 && cfg.listN > 0; }
+static void applyFaces() { vClock = cfg.clockStyle; vWeather = cfg.weatherStyle; }
+static bool slotUsable(int i) { return cfg.list[i].page < PAGE_COUNT && (cfg.list[i].page != PAGE_GIF || gifOk); }
+static void enterSlot(int i) {                          // show one playlist item: its page and its face
+  curSlot = i;
+  applyFaces();
+  const Slot& sl = cfg.list[i];
+  if (sl.page == PAGE_CLOCK) vClock = sl.style;
+  if (sl.page == PAGE_WEATHER) vWeather = sl.style;
+  setPage(sl.page);
+}
 uint8_t nextPageFrom(uint8_t cur) {
   for (uint8_t i = 1; i <= PAGE_COUNT; i++) { uint8_t p = (cur + i) % PAGE_COUNT; if (pageUsable(p)) return p; }
   return PAGE_CLOCK;
@@ -374,13 +387,21 @@ static int textW(const Font& f, const char* s) {
   return w;
 }
 
-static void drawDots() {                                // optional page indicator (rotating mode only)
-  if (!cfg.pageDots || !rotating()) return;
-  int n = usableCount(), x = 120 - (n - 1) * 6;
-  for (uint8_t p = 0; p < PAGE_COUNT; p++) {
-    if (!pageUsable(p)) continue;
-    tft.fillCircle(x, 235, 2, p == page ? cAccent : cTrack);
-    x += 12;
+static void drawDots() {                                // optional indicator: one dot per page, or per playlist item
+  if (!cfg.pageDots) return;
+  bool list = playlistActive();
+  if (!list && !rotating()) return;
+  int n = list ? cfg.listN : usableCount();
+  if (n < 2) return;
+  int x = 120 - (n - 1) * 6;
+  if (list) {
+    for (int k = 0; k < n; k++) { tft.fillCircle(x, 235, 2, k == curSlot ? cAccent : cTrack); x += 12; }
+  } else {
+    for (uint8_t p = 0; p < PAGE_COUNT; p++) {
+      if (!pageUsable(p)) continue;
+      tft.fillCircle(x, 235, 2, p == page ? cAccent : cTrack);
+      x += 12;
+    }
   }
 }
 static void clearScreen() { tft.fillScreen(cBg); drawDots(); }
@@ -599,7 +620,7 @@ void renderClock() {
   if (syncing) { syncing = false; fullRedraw = true; }
   time_t now = time(nullptr); struct tm t; localtime_r(&now, &t);
   if (t.tm_mday != lastDay) { lastDay = t.tm_mday; fullRedraw = true; }
-  uint8_t st = cfg.clockStyle > 8 ? 0 : cfg.clockStyle;
+  uint8_t st = vClock > 8 ? 0 : vClock;
   bool cards = (st == 2), info = cfg.showInfo;
   uint16_t panel = cards ? cPanel : cBg;
   bool full = fullRedraw;
@@ -663,7 +684,7 @@ void renderWeather() {
   clearScreen();
   if (!wx.valid) { drawText(F_TXT, wxErr ? wxErr : "Fetching weather...", 120, 126, AL_C, cDim, cBg); return; }
   char tb[24];
-  if (cfg.weatherStyle == 1) {                                   // card
+  if (vWeather == 1) {                                   // card
     drawRRect(6, 6, 228, 228, 32, cPanel, cBg);
     drawIcon(*wxIcon(wx.code, wx.isDay), 42, 44, 32, cPanel);
     drawText(F_TXT, wxShort(wx.code, wx.isDay), 70, 52, AL_L, cText, cPanel);
@@ -687,7 +708,7 @@ void renderWeather() {
     }
     return;
   }
-  if (cfg.weatherStyle == 2) {                                   // tiles
+  if (vWeather == 2) {                                   // tiles
     drawText(F_TXT, wxShort(wx.code, wx.isDay), 120, 24, AL_C, cDim, cBg);
     drawIcon(*wxIcon(wx.code, wx.isDay), 50, 64, 64, cBg);
     snprintf(tb, sizeof tb, "%d%c", (int)roundf(wx.temp), 0xB0);
@@ -713,7 +734,7 @@ void renderWeather() {
     }
     return;
   }
-  if (cfg.weatherStyle == 3) {                                   // range: where "now" sits between today's low and high
+  if (vWeather == 3) {                                   // range: where "now" sits between today's low and high
     drawIcon(*wxIcon(wx.code, wx.isDay), 30, 30, 32, cBg);
     drawText(F_TXT, wxShort(wx.code, wx.isDay), 54, 38, AL_L, cDim, cBg);
     snprintf(tb, sizeof tb, "%d%c", (int)roundf(wx.temp), 0xB0);
@@ -739,7 +760,7 @@ void renderWeather() {
     drawText(F_TXT, tb, 138, 228, AL_L, cText, cBg);
     return;
   }
-  if (cfg.weatherStyle == 4) {                                   // hourly: now + next four hours, with temperature bars
+  if (vWeather == 4) {                                   // hourly: now + next four hours, with temperature bars
     drawIcon(*wxIcon(wx.code, wx.isDay), 30, 34, 32, cBg);
     snprintf(tb, sizeof tb, "%d%c", (int)roundf(wx.temp), 0xB0);
     drawText(F_VAL, tb, 54, 48, AL_L, cText, cBg, 70);
@@ -767,7 +788,7 @@ void renderWeather() {
     }
     return;
   }
-  if (cfg.weatherStyle == 5) {                                   // list: big temperature, then labelled rows
+  if (vWeather == 5) {                                   // list: big temperature, then labelled rows
     snprintf(tb, sizeof tb, "%d%c", (int)roundf(wx.temp), 0xB0);
     if (textW(F_TIME, tb) > 140) tb[strlen(tb) - 1] = 0;
     drawText(F_TIME, tb, 16, 80, AL_L, cText, cBg);
@@ -1006,7 +1027,12 @@ void applyConfig() {
   snprintf(tBrtSet, sizeof tBrtSet, "%s/brightness/set", cfg.mqttTopic);
   snprintf(tPageSet, sizeof tPageSet, "%s/page/set", cfg.mqttTopic);
   snprintf(tGifNext, sizeof tGifNext, "%s/gif/next", cfg.mqttTopic);
-  if (cfg.mode > 0) {                                   // one page pinned
+  applyFaces();
+  if (playlistActive()) {                               // custom playlist: start at its first usable item
+    int first = 0;
+    for (int i = 0; i < cfg.listN; i++) if (slotUsable(i)) { first = i; break; }
+    enterSlot(first);
+  } else if (cfg.mode >= 1 && cfg.mode <= 4) {          // one page pinned
     uint8_t t = cfg.mode - 1;
     if (t == PAGE_GIF && !gifOk) t = PAGE_CLOCK;
     setPage(t);
@@ -1060,7 +1086,7 @@ void mqttCb(char* topic, byte* pl, unsigned len) {
   char b[16]; len = min(len, 15u); memcpy(b, pl, len); b[len] = 0;
   int v = atoi(b);
   if (!strcmp(topic, tBrtSet)) { cfg.brightness = constrain(v, 0, 100); applyBrightness(); publishState(); }
-  else if (!strcmp(topic, tPageSet) && pageUsable(v)) setPage(v);
+  else if (!strcmp(topic, tPageSet) && pageUsable(v)) { applyFaces(); setPage(v); }
   else if (!strcmp(topic, tGifNext)) { if (gifAdvance(false) && page != PAGE_GIF) setPage(PAGE_GIF); }
 }
 
@@ -1140,8 +1166,9 @@ void handlePage() {
   if (n < 0 || n >= PAGE_COUNT || (n == PAGE_GIF && !gifOk)) {
     server.send(400, "application/json", "{\"error\":\"That page is not available (GIF needs a selected file)\"}"); return;
   }
+  applyFaces();
   setPage(n);
-  if (cfg.mode != 0) { cfg.mode = n + 1; saveSettings(cfg); }   // in single-page mode, this changes the pinned page
+  if (cfg.mode >= 1 && cfg.mode <= 4) { cfg.mode = n + 1; saveSettings(cfg); }   // in single-page mode, this changes the pinned page
   sendOk();
 }
 
@@ -1398,7 +1425,14 @@ void loop() {
     case PAGE_GIF:     gifTick(); break;
   }
 
-  if (rotating() && now - pageSince > (uint32_t)cfg.rotateSec * 1000UL) setPage(nextPageFrom(page));
+  if (playlistActive()) {                               // custom playlist: each item has its own time
+    if (curSlot >= cfg.listN) curSlot = 0;
+    if (cfg.listN > 1 && now - pageSince > (uint32_t)cfg.list[curSlot].secs * 1000UL) {
+      int nx = curSlot;
+      for (int k = 1; k < cfg.listN; k++) { int i = (curSlot + k) % cfg.listN; if (slotUsable(i)) { nx = i; break; } }
+      if (nx != curSlot) enterSlot(nx); else pageSince = now;
+    }
+  } else if (rotating() && now - pageSince > (uint32_t)cfg.rotateSec * 1000UL) setPage(nextPageFrom(page));
   if (now - lastSlow >= 30000) { lastSlow = now; applyBrightness(); }
   if (page != PAGE_GIF) delay(10);
   yield();

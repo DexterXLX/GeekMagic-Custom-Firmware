@@ -62,6 +62,11 @@ ul.files .sel{color:var(--accent);font-weight:600}
 .bar{height:8px;border-radius:4px;background:var(--line);overflow:hidden;margin:10px 0 4px}
 .bar i{display:block;height:100%;background:var(--accent);width:0}
 .dim{color:var(--dim);font-size:.85rem}
+.pl{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)}
+.pl select{width:auto;flex:1 1 110px}
+.pl input{width:70px}
+.pl .n{width:20px;color:var(--dim)}
+.pl button{padding:6px 10px;min-width:36px}
 .sw{display:flex;flex-wrap:wrap;gap:8px;padding:2px 0 10px;border-bottom:1px solid var(--line)}
 .sw button{width:30px;height:30px;border-radius:50%;border:2px solid var(--line);cursor:pointer;padding:0}
 dl{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:8px 0}
@@ -99,14 +104,20 @@ dt{color:var(--dim)}dd{margin:0;text-align:right;font-variant-numeric:tabular-nu
 
   <section id="display" class="on">
     <fieldset><legend>What to show</legend>
-      <label><span>Display mode<small>Pick a single page to keep it on screen</small></span>
+      <label><span>Display mode<small>Keep one page, rotate evenly, or build your own playlist below</small></span>
         <select data-k="mode" data-num>
           <option value="0">Rotate through pages</option>
           <option value="1">Clock only</option>
           <option value="2">Weather only</option>
           <option value="3">Status only</option>
           <option value="4">GIF only</option>
+          <option value="5">Custom playlist</option>
         </select></label>
+    </fieldset>
+    <fieldset><legend>Playlist</legend>
+      <p class="dim" style="margin:8px 0">Used when Display mode is "Custom playlist". Each item shows for its own time. Use the same page twice with different faces to alternate between them.</p>
+      <div id="plist"></div>
+      <div class="row"><button class="btn" id="padd" type="button">Add item</button></div>
     </fieldset>
     <fieldset><legend>Style</legend>
       <label><span>Color theme</span>
@@ -257,6 +268,27 @@ $('#theme').onclick=()=>{const d=matchMedia('(prefers-color-scheme:dark)').match
 /* tabs */
 $$('#tabs button').forEach(b=>b.onclick=()=>{$$('#tabs button').forEach(x=>x.setAttribute('aria-selected',x===b));$$('main section').forEach(s=>s.classList.toggle('on',s.id===b.dataset.t));if(b.dataset.t==='gifs')loadGifs()});
 
+/* playlist */
+const PGN=['Clock','Weather','Status','GIF'];
+const FACES=[['Classic','Accent','Cards','Stacked','Day progress','Glance','Week','Sidebar','Date'],['Forecast','Card','Tiles','Range','Hourly','List'],[],[]];
+let plist=[];
+const opts=(a,sel)=>a.map((n,i)=>`<option value="${i}"${i===sel?' selected':''}>${n}</option>`).join('');
+function renderList(){
+  const box=$('#plist');box.innerHTML='';
+  if(!plist.length){box.innerHTML='<p class="dim">No items yet. Press Add item.</p>';return}
+  plist.forEach((it,i)=>{
+    const d=document.createElement('div');d.className='pl';
+    const fc=FACES[it.p]||[];
+    d.innerHTML=`<span class="n">${i+1}</span><select class="lp" aria-label="Page">${opts(PGN,it.p)}</select>${fc.length?`<select class="ls" aria-label="Face">${opts(fc,it.s)}</select>`:''}<input class="lt" type="number" min="1" max="600" value="${it.t}" aria-label="Seconds"><span class="dim">sec</span><button class="btn" type="button" data-a="up" aria-label="Move up">&#9650;</button><button class="btn" type="button" data-a="dn" aria-label="Move down">&#9660;</button><button class="btn" type="button" data-a="rm" aria-label="Remove">&#10005;</button>`;
+    d.querySelector('.lp').onchange=e=>{it.p=+e.target.value;it.s=0;dirty=true;renderList()};
+    const ls=d.querySelector('.ls');if(ls)ls.onchange=e=>{it.s=+e.target.value;dirty=true};
+    d.querySelector('.lt').oninput=e=>{it.t=Math.max(1,Math.min(600,+e.target.value||1));dirty=true};
+    d.querySelectorAll('button').forEach(b=>b.onclick=()=>{const a=b.dataset.a;dirty=true;if(a==='rm')plist.splice(i,1);else if(a==='up'&&i>0)[plist[i-1],plist[i]]=[plist[i],plist[i-1]];else if(a==='dn'&&i<plist.length-1)[plist[i+1],plist[i]]=[plist[i],plist[i+1]];renderList()});
+    box.appendChild(d);
+  });
+}
+$('#padd').onclick=()=>{if(plist.length>=10){toast('Up to 10 items');return}plist.push({p:plist.length&&plist[plist.length-1].p===0?1:0,s:0,t:10});dirty=true;renderList()};
+
 /* color swatches */
 const PRESET=['#FF6B57','#FF9F0A','#FFD60A','#A3E635','#30D158','#2DD4BF','#64D2FF','#0A84FF','#BF5AF2','#FF375F','#FFFFFF'];
 $$('.sw').forEach(box=>{const k=box.dataset.for;PRESET.forEach(c=>{const b=document.createElement('button');b.type='button';b.style.background=c;b.setAttribute('aria-label','Use '+c);b.onclick=()=>{const i=$('[data-k='+k+']');i.value=c.toLowerCase();i.dispatchEvent(new Event('input',{bubbles:true}));if(k==='accent')setAccent(c)};box.appendChild(b)})});
@@ -271,13 +303,15 @@ function fill(){
   const o=[...$('#tzpreset').options].find(x=>x.value===cfg.tz);$('#tzpreset').value=o?o.value:'';
   setAccent(cfg.accent||'#2DD4BF');$('#pt').textContent=(cfg.mqttTopic||'smalltv')+'/page/set';
 }
-async function loadCfg(){cfg=await api('/api/config');fill()}
+async function loadCfg(){cfg=await api('/api/config');fill();plist=(cfg.list||[]).map(x=>({p:x.p,s:x.s,t:x.t}));renderList()}
 $('#tzpreset').onchange=e=>{if(e.target.value)$('#tz').value=e.target.value};
 $('[data-k=accent]').oninput=e=>setAccent(e.target.value);
 $$('[data-k],[data-bit]').forEach(e=>e.addEventListener('input',()=>dirty=true));
 $('#save').onclick=async()=>{
   const body={};
   $$('[data-k]').forEach(e=>{const k=e.dataset.k;body[k]=e.type==='checkbox'?e.checked:(e.hasAttribute('data-num')?Number(e.value):e.value)});
+  if(body.mode===5&&!plist.length){toast('Add at least one playlist item first');return}
+  body.list=plist;
   body.pages=$$('[data-bit]').reduce((a,e)=>a|(e.checked?+e.dataset.bit:0),0)||1;
   try{const r=await api('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});dirty=false;toast(r.saved===false?'Applied, but not saved: storage unavailable':'Saved');await loadCfg()}catch(e){toast(e.message)}
 };

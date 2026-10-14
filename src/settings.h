@@ -6,12 +6,15 @@
 // ---- Hardware (verify against your board!) ----
 #define BL_PIN        5      // backlight, PWM
 #define BL_ACTIVE_LOW 1      // 1 = LOW turns the backlight on
-#define FW_VERSION    "1.6.0"
+#define FW_VERSION    "1.7.0"
 #define CONFIG_PATH   "/smalltv_cfg.json"   // own name: never touches the stock firmware's /config.json
 #define GIF_DIR       "/image"   // same folder the stock firmware uses for GIFs
 #define GIF_DIR2      "/gif"     // also searched, in case stock GIFs live here
 #define RECOVERY_BOOTS 3          // this many unfinished boots in a row -> recovery mode
 #define HEALTHY_MS    180000UL    // uptime after which a boot counts as good
+
+#define MAX_SLOTS 10
+struct Slot { uint8_t page, style; uint16_t secs; };   // one playlist item: which page, which face, how long
 
 enum Page : uint8_t { PAGE_CLOCK = 0, PAGE_WEATHER = 1, PAGE_STATS = 2, PAGE_GIF = 3, PAGE_COUNT = 4 };
 
@@ -40,7 +43,9 @@ struct Settings {
   char     mqttPass[48]  = "";
   char     mqttTopic[32] = "smalltv";
   bool     haDiscovery   = true;
-  uint8_t  mode          = 0;               // 0 = rotate pages, 1..4 = keep one page (clock, weather, status, GIF)
+  uint8_t  mode          = 0;               // 0 = rotate pages, 1..4 = keep one page (clock, weather, status, GIF), 5 = custom playlist
+  Slot     list[MAX_SLOTS];                   // custom playlist
+  uint8_t  listN         = 0;
   uint8_t  clockStyle    = 0;               // 0 classic, 1 accent, 2 cards, 3 stacked, 4 day progress, 5 glance, 6 week, 7 sidebar, 8 date
   uint8_t  weatherStyle  = 0;               // 0 forecast, 1 card, 2 tiles, 3 range, 4 hourly, 5 list
   uint8_t  theme         = 0;               // 0 black, 1 midnight, 2 graphite, 3 light
@@ -86,7 +91,7 @@ inline void settingsFromJson(Settings& s, JsonVariantConst v) {
   if (!v["mqttEnabled"].isNull())  s.mqttEnabled = v["mqttEnabled"];
   if (!v["mqttPort"].isNull())     s.mqttPort = v["mqttPort"];
   if (!v["haDiscovery"].isNull())  s.haDiscovery = v["haDiscovery"];
-  if (!v["mode"].isNull())         s.mode = constrain((int)v["mode"], 0, 4);
+  if (!v["mode"].isNull())         s.mode = constrain((int)v["mode"], 0, 5);
   if (!v["clockStyle"].isNull())   s.clockStyle = constrain((int)v["clockStyle"], 0, 8);
   if (!v["weatherStyle"].isNull()) s.weatherStyle = constrain((int)v["weatherStyle"], 0, 5);
   if (!v["theme"].isNull())        s.theme = constrain((int)v["theme"], 0, 3);
@@ -98,6 +103,18 @@ inline void settingsFromJson(Settings& s, JsonVariantConst v) {
   if (!v["gifAuto"].isNull())      s.gifAuto = v["gifAuto"];
   if (!v["gifSecs"].isNull())      s.gifSecs = constrain((int)v["gifSecs"], 3, 3600);
   if (!v["gifSpeed"].isNull())     s.gifSpeed = constrain((int)v["gifSpeed"], 25, 300);
+  JsonArrayConst pl = v["list"].as<JsonArrayConst>();
+  if (!pl.isNull()) {
+    s.listN = 0;
+    for (JsonVariantConst o : pl) {
+      if (s.listN >= MAX_SLOTS) break;
+      int p = o["p"] | 0, f = o["s"] | 0, t = o["t"] | 10;
+      s.list[s.listN].page = constrain(p, 0, 3);
+      s.list[s.listN].style = constrain(f, 0, 8);
+      s.list[s.listN].secs = constrain(t, 1, 600);
+      s.listN++;
+    }
+  }
   if (s.pages == 0) s.pages = 0x01;
 }
 
@@ -118,6 +135,8 @@ inline void settingsToJson(const Settings& s, JsonDocument& d, bool includeSecre
   d["showInfo"] = s.showInfo;           d["infoRight"] = s.infoRight;
   d["pageDots"] = s.pageDots;
   d["gifAuto"] = s.gifAuto;             d["gifSecs"] = s.gifSecs;         d["gifSpeed"] = s.gifSpeed;
+  JsonArray pl = d["list"].to<JsonArray>();
+  for (int i = 0; i < s.listN; i++) { JsonObject o = pl.add<JsonObject>(); o["p"] = s.list[i].page; o["s"] = s.list[i].style; o["t"] = s.list[i].secs; }
   d["mqttPass"] = includeSecrets ? s.mqttPass : "";
 }
 
