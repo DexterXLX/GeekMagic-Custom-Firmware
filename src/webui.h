@@ -62,6 +62,8 @@ ul.files .sel{color:var(--accent);font-weight:600}
 .bar{height:8px;border-radius:4px;background:var(--line);overflow:hidden;margin:10px 0 4px}
 .bar i{display:block;height:100%;background:var(--accent);width:0}
 .dim{color:var(--dim);font-size:.85rem}
+.sw{display:flex;flex-wrap:wrap;gap:8px;padding:2px 0 10px;border-bottom:1px solid var(--line)}
+.sw button{width:30px;height:30px;border-radius:50%;border:2px solid var(--line);cursor:pointer;padding:0}
 dl{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:8px 0}
 dt{color:var(--dim)}dd{margin:0;text-align:right;font-variant-numeric:tabular-nums}
 .row{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px}
@@ -112,15 +114,21 @@ dt{color:var(--dim)}dd{margin:0;text-align:right;font-variant-numeric:tabular-nu
           <option value="0">Black</option><option value="1">Midnight</option>
           <option value="2">Graphite</option><option value="3">Light</option>
         </select></label>
-      <label><span>Clock style<small>Stacked, Day progress and Glance have their own layout</small></span>
+      <label><span>Accent color<small>Highlights, bars, and the Accent clock</small></span><input type="color" data-k="accent"></label>
+      <div class="sw" data-for="accent"></div>
+      <label><span>Time color<small>White follows the theme</small></span><input type="color" data-k="timeColor"></label>
+      <div class="sw" data-for="timeColor"></div>
+      <label><span>Clock style<small>Stacked, Day progress, Glance, Week, Sidebar and Date have their own layouts</small></span>
         <select data-k="clockStyle" data-num>
           <option value="0">Classic</option><option value="1">Accent color</option><option value="2">Cards</option>
           <option value="3">Stacked</option><option value="4">Day progress</option><option value="5">Glance</option>
+          <option value="6">Week</option><option value="7">Sidebar</option><option value="8">Date</option>
         </select></label>
-      <label><span>Weather style<small>Forecast: three days. Tiles and Range: details for today</small></span>
+      <label><span>Weather style<small>Forecast: three days. Hourly: next hours. Tiles, Range and List: details for today</small></span>
         <select data-k="weatherStyle" data-num>
           <option value="0">Forecast</option><option value="1">Card</option>
           <option value="2">Tiles</option><option value="3">Range</option>
+          <option value="4">Hourly</option><option value="5">List</option>
         </select></label>
       <label><span>Show date</span><input type="checkbox" data-k="showDate"></label>
       <label><span>Show info under the clock<small>Outside temperature and one more value</small></span><input type="checkbox" data-k="showInfo"></label>
@@ -133,7 +141,6 @@ dt{color:var(--dim)}dd{margin:0;text-align:right;font-variant-numeric:tabular-nu
     </fieldset>
     <fieldset><legend>Screen</legend>
       <label><span>Brightness</span><input type="range" min="0" max="100" data-k="brightness" data-num></label>
-      <label><span>Accent color</span><input type="color" data-k="accent"></label>
       <label><span>Flip upside down<small>Use if the stand puts the screen upside down</small></span><input type="checkbox" data-k="flip"></label>
       <label><span>24-hour clock</span><input type="checkbox" data-k="h24"></label>
     </fieldset>
@@ -202,6 +209,7 @@ dt{color:var(--dim)}dd{margin:0;text-align:right;font-variant-numeric:tabular-nu
     <fieldset><legend>Playback</legend>
       <label><span>Play all GIFs in turn<small>Moves to the next GIF at the end of a loop</small></span><input type="checkbox" data-k="gifAuto"></label>
       <label><span>Seconds per GIF</span><input type="number" min="3" max="3600" data-k="gifSecs" data-num></label>
+      <label><span>Speed (%)<small>100 = the GIF's own speed. Lower is slower</small></span><input type="number" min="25" max="300" data-k="gifSpeed" data-num></label>
     </fieldset>
     <fieldset><legend>Your GIFs</legend>
       <ul class="files" id="files"><li class="dim">Loading…</li></ul>
@@ -248,6 +256,10 @@ $('#theme').onclick=()=>{const d=matchMedia('(prefers-color-scheme:dark)').match
 
 /* tabs */
 $$('#tabs button').forEach(b=>b.onclick=()=>{$$('#tabs button').forEach(x=>x.setAttribute('aria-selected',x===b));$$('main section').forEach(s=>s.classList.toggle('on',s.id===b.dataset.t));if(b.dataset.t==='gifs')loadGifs()});
+
+/* color swatches */
+const PRESET=['#FF6B57','#FF9F0A','#FFD60A','#A3E635','#30D158','#2DD4BF','#64D2FF','#0A84FF','#BF5AF2','#FF375F','#FFFFFF'];
+$$('.sw').forEach(box=>{const k=box.dataset.for;PRESET.forEach(c=>{const b=document.createElement('button');b.type='button';b.style.background=c;b.setAttribute('aria-label','Use '+c);b.onclick=()=>{const i=$('[data-k='+k+']');i.value=c.toLowerCase();i.dispatchEvent(new Event('input',{bubbles:true}));if(k==='accent')setAccent(c)};box.appendChild(b)})});
 
 /* accent */
 function setAccent(h){document.documentElement.style.setProperty('--accent',h);const n=parseInt(h.slice(1),16),r=n>>16,g=n>>8&255,b=n&255;document.documentElement.style.setProperty('--on-accent',(r*299+g*587+b*114)/1000>150?'#0B1220':'#FFFFFF')}

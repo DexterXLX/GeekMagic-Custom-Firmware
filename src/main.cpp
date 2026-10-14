@@ -29,11 +29,12 @@ WiFiClient netClient;
 PubSubClient mqtt(netClient);
 AnimatedGIF* gif = nullptr;
 
-uint16_t cBg, cPanel, cText, cDim, cTrack, cAccent;
+uint16_t cBg, cPanel, cText, cDim, cTrack, cAccent, cTime;
 char apName[24];
 
 struct Weather {
-  bool valid = false; float temp = 0, hi = 0, lo = 0, wind = 0; int code = 0, hum = 0; bool isDay = true;
+  bool valid = false; float temp = 0, hi = 0, lo = 0, wind = 0, feels = 0; int code = 0, hum = 0; bool isDay = true;
+  float htemp[5] = {0, 0, 0, 0, 0}; int hcode[5] = {0, 0, 0, 0, 0}; bool hday[5] = {true, true, true, true, true};   // next hours
   int dcode[3] = {0, 0, 0}; float dhi[3] = {0, 0, 0}, dlo[3] = {0, 0, 0};     // today + next two days
 } wx;
 uint32_t wxVer = 0, lastWxVer = 0xFFFFFFFF;                                  // bumped on every weather update
@@ -103,6 +104,7 @@ void rebuildColors() {
       cBg = C565(0, 0, 0); cPanel = C565(28, 28, 30); cText = C565(255, 255, 255); cDim = C565(142, 142, 147); cTrack = C565(58, 58, 60); break;
   }
   cAccent = hexTo565(cfg.accent);
+  cTime = (strcasecmp(cfg.timeColor, "#FFFFFF") == 0) ? cText : hexTo565(cfg.timeColor);   // white = follow the theme
 }
 
 bool timeValid() { return time(nullptr) > 1700000000; }
@@ -168,11 +170,12 @@ void fetchWeather() {
 #else
   const char* scheme = "http";
 #endif
-  char url[420];
+  char url[460];
   snprintf(url, sizeof url,
            "%s://api.open-meteo.com/v1/forecast?latitude=%.4f&longitude=%.4f"
-           "&current=temperature_2m,relative_humidity_2m,weather_code,is_day,wind_speed_10m"
+           "&current=temperature_2m,relative_humidity_2m,weather_code,is_day,wind_speed_10m,apparent_temperature"
            "&daily=weather_code,temperature_2m_max,temperature_2m_min&forecast_days=3&timezone=auto"
+           "&hourly=temperature_2m,weather_code,is_day&forecast_hours=5"
            "&temperature_unit=%s&wind_speed_unit=%s",
            scheme, cfg.lat, cfg.lon, cfg.fahrenheit ? "fahrenheit" : "celsius", cfg.fahrenheit ? "mph" : "kmh");
   HTTPClient http;
@@ -192,6 +195,10 @@ void fetchWeather() {
     filter["current"]["weather_code"] = true;
     filter["current"]["is_day"] = true;
     filter["current"]["wind_speed_10m"] = true;
+    filter["current"]["apparent_temperature"] = true;
+    filter["hourly"]["temperature_2m"][0] = true;
+    filter["hourly"]["weather_code"][0] = true;
+    filter["hourly"]["is_day"][0] = true;
     filter["daily"]["weather_code"][0] = true;
     filter["daily"]["temperature_2m_max"][0] = true;
     filter["daily"]["temperature_2m_min"][0] = true;
@@ -200,6 +207,12 @@ void fetchWeather() {
       wx.temp = doc["current"]["temperature_2m"] | 0.0f;
       wx.hum = doc["current"]["relative_humidity_2m"] | 0;
       wx.wind = doc["current"]["wind_speed_10m"] | 0.0f;
+      wx.feels = doc["current"]["apparent_temperature"] | wx.temp;
+      for (int i = 0; i < 5; i++) {
+        wx.htemp[i] = doc["hourly"]["temperature_2m"][i] | wx.temp;
+        wx.hcode[i] = doc["hourly"]["weather_code"][i] | wx.code;
+        wx.hday[i] = (doc["hourly"]["is_day"][i] | 1) == 1;
+      }
       wx.code = doc["current"]["weather_code"] | 0;
       wx.isDay = (doc["current"]["is_day"] | 1) == 1;
       for (int i = 0; i < 3; i++) {
@@ -425,9 +438,9 @@ static void drawInfo(uint8_t st) {
     const char* val = b ? v2 : v1;
     const char* un = b ? u2 : u1;
     int32_t ov = b ? ov2 : -1;
-    int bx = card ? (b ? 124 : 6) : (b ? 124 : 24);
-    int icx = card ? bx + 20 : bx + 8, icy = card ? 181 : 172;
-    int lx = card ? bx + 34 : bx + 22, lb = card ? 187 : 178;
+    int bx = card ? (b ? 122 : 6) : (b ? 124 : 24);
+    int icx = card ? bx + 18 : bx + 8, icy = card ? 181 : 172;
+    int lx = card ? bx + 30 : bx + 22, lb = card ? 187 : 178;
     int vx = card ? bx + 14 : bx, vb = card ? 224 : 214;
     drawIcon(ic, icx, icy, 16, bg, ov);
     drawText(F_CAP, lab, lx, lb, AL_L, lcol, bg);
@@ -436,38 +449,50 @@ static void drawInfo(uint8_t st) {
   }
 }
 
-// Styles 3..5: stacked (hours over minutes), day progress, glance (weather strip + clock).
+// Styles 3..8: stacked, day progress, glance, week, sidebar, date.
+// Layout rule for all of them: the clock is one block, and related information sits together in a single group.
+static const char* const WDF[7] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
+static const char* const WD2[7] = {"SU", "MO", "TU", "WE", "TH", "FR", "SA"};
+static const char* const MOF[12] = {"January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"};
+static const char* const MOFU[12] = {"JANUARY", "FEBRUARY", "MARCH", "APRIL", "MAY", "JUNE", "JULY", "AUGUST", "SEPTEMBER", "OCTOBER", "NOVEMBER", "DECEMBER"};
+
+static uint16_t onColor(uint16_t c) {                     // readable text color on top of c
+  int r = (c >> 11) << 3, g = ((c >> 5) & 63) << 2, b = (c & 31) << 3;
+  return ((r * 299 + g * 587 + b * 114) / 1000 > 150) ? C565(20, 20, 24) : C565(255, 255, 255);
+}
+
 static void renderClockExtra(uint8_t st, const struct tm& t, bool full) {
   int h = t.tm_hour;
   if (!cfg.h24) { h %= 12; if (!h) h = 12; }
   bool newMin = (t.tm_min != lastMin);
   bool newWx = (full || wxVer != lastWxVer);
+  if (newMin) lastMin = t.tm_min;
+  if (newWx) lastWxVer = wxVer;
   char db[24], tb[8], ib[40];
   snprintf(db, sizeof db, "%s, %s %d", WD[t.tm_wday], MO[t.tm_mon], t.tm_mday);
   const char* ampm = t.tm_hour < 12 ? "AM" : "PM";
-  if (st == 3) {                                              // stacked
+  if (cfg.h24) snprintf(tb, sizeof tb, "%02d:%02d", h, t.tm_min); else snprintf(tb, sizeof tb, "%d:%02d", h, t.tm_min);
+  char unit[3] = {(char)0xB0, cfg.fahrenheit ? 'F' : 'C', 0};
+
+  if (st == 3) {                                              // stacked: hours over minutes, date and weather as one caption
     if (newMin) {
-      lastMin = t.tm_min;
-      snprintf(tb, sizeof tb, cfg.h24 ? "%02d" : "%d", h);
-      drawText(F_TIME, tb, 120, 88, AL_C, cText, cBg, 150);
-      snprintf(tb, sizeof tb, "%02d", t.tm_min);
-      drawText(F_TIME, tb, 120, 162, AL_C, cAccent, cBg, 150);
+      char hb[4]; snprintf(hb, sizeof hb, cfg.h24 ? "%02d" : "%d", h);
+      drawText(F_TIME, hb, 120, 88, AL_C, cTime, cBg, 150);
+      snprintf(ib, sizeof ib, "%02d", t.tm_min);
+      drawText(F_TIME, ib, 120, 162, AL_C, cAccent, cBg, 150);
       if (!cfg.h24) drawText(F_CAP, ampm, 222, 162, AL_R, cDim, cBg);
       if (cfg.showDate) drawText(F_TXT, db, 120, 206, AL_C, cDim, cBg, 200);
     }
     if (cfg.showInfo && newWx) {
-      lastWxVer = wxVer;
-      if (wx.valid) snprintf(ib, sizeof ib, "%d%c%c  %c  %d%%", (int)roundf(wx.temp), 0xB0, cfg.fahrenheit ? 'F' : 'C', 0xB7, wx.hum);
+      if (wx.valid) snprintf(ib, sizeof ib, "%d%s  %c  %d%%", (int)roundf(wx.temp), unit, 0xB7, wx.hum);
       else strcpy(ib, "--");
       drawText(F_TXT, ib, 120, 231, AL_C, cDim, cBg, 200);
     }
     return;
   }
-  if (st == 4) {                                              // day progress
+  if (st == 4) {                                              // day progress: clock block, then one progress group
     if (newMin) {
-      lastMin = t.tm_min;
-      if (cfg.h24) snprintf(tb, sizeof tb, "%02d:%02d", h, t.tm_min); else snprintf(tb, sizeof tb, "%d:%02d", h, t.tm_min);
-      drawText(F_TIME, tb, 120, 98, AL_C, cText, cBg, 212);
+      drawText(F_TIME, tb, 120, 98, AL_C, cTime, cBg, 212);
       if (cfg.showDate) drawText(F_TXT, db, 120, 140, AL_C, cDim, cBg, 190);
       if (!cfg.h24) drawText(F_CAP, ampm, 224, 140, AL_R, cDim, cBg);
       float frac = (t.tm_hour * 60 + t.tm_min) / 1440.0f;
@@ -480,25 +505,87 @@ static void renderClockExtra(uint8_t st, const struct tm& t, bool full) {
     }
     return;
   }
-  // st == 5: glance
-  if (newWx) {
-    lastWxVer = wxVer;
-    if (wx.valid) {
-      drawIcon(*wxIcon(wx.code, wx.isDay), 30, 36, 32, cBg);
-      snprintf(ib, sizeof ib, "%d%c", (int)roundf(wx.temp), 0xB0);
-      drawText(F_VAL, ib, 54, 50, AL_L, cText, cBg, 60);
-      drawText(F_TXT, wxShort(wx.code, wx.isDay), 228, 48, AL_R, cDim, cBg, 120);
-      snprintf(ib, sizeof ib, "High %d%c    Low %d%c", (int)roundf(wx.hi), 0xB0, (int)roundf(wx.lo), 0xB0);
-      drawText(F_TXT, ib, 120, 226, AL_C, cDim, cBg, 220);
-    } else drawText(F_TXT, "--", 54, 48, AL_L, cDim, cBg, 60);
-    tft.fillRect(20, 68, 200, 1, cTrack);
+  if (st == 5) {                                              // glance: clock on top, ONE weather card below with everything in it
+    if (newMin) {
+      drawText(F_TIME, tb, 120, 88, AL_C, cTime, cBg, 212);
+      if (cfg.showDate) drawText(F_TXT, db, 120, 128, AL_C, cDim, cBg, 190);
+      if (!cfg.h24) drawText(F_CAP, ampm, 224, 128, AL_R, cDim, cBg);
+    }
+    if (newWx) {
+      drawRRect(10, 148, 220, 84, 24, cPanel, cBg);
+      if (wx.valid) {
+        drawIcon(*wxIcon(wx.code, wx.isDay), 46, 190, 32, cPanel);
+        snprintf(ib, sizeof ib, "%d%c", (int)roundf(wx.temp), 0xB0);
+        drawText(F_VAL, ib, 74, 188, AL_L, cText, cPanel);
+        drawText(F_CAP, wxShort(wx.code, wx.isDay), 74, 214, AL_L, cDim, cPanel);
+        snprintf(ib, sizeof ib, "H %d%c", (int)roundf(wx.hi), 0xB0);
+        drawText(F_TXT, ib, 216, 188, AL_R, cText, cPanel);
+        snprintf(ib, sizeof ib, "L %d%c", (int)roundf(wx.lo), 0xB0);
+        drawText(F_TXT, ib, 216, 214, AL_R, cDim, cPanel);
+      } else drawText(F_TXT, "--", 120, 196, AL_C, cDim, cPanel);
+    }
+    return;
+  }
+  if (st == 6) {                                              // week: clock, weekday, then a seven-day strip
+    if (newMin) {
+      drawText(F_TIME, tb, 120, 86, AL_C, cTime, cBg, 212);
+      if (cfg.showDate) drawText(F_TXT, WDF[t.tm_wday], 120, 126, AL_C, cDim, cBg, 190);
+      if (!cfg.h24) drawText(F_CAP, ampm, 224, 126, AL_R, cDim, cBg);
+    }
+    if (full) {                                               // changes only at midnight
+      time_t noon = time(nullptr) - (t.tm_hour * 3600 + t.tm_min * 60 + t.tm_sec) + 12 * 3600;
+      for (int i = -3; i <= 3; i++) {
+        time_t ti = noon + (time_t)i * 86400; struct tm lt; localtime_r(&ti, &lt);
+        int cx = 120 + i * 32;
+        char nb[4]; snprintf(nb, sizeof nb, "%d", lt.tm_mday);
+        drawText(F_CAP, WD2[lt.tm_wday], cx, 162, AL_C, i == 0 ? cAccent : cDim, cBg);
+        if (i == 0) { drawRRect(cx - 15, 170, 30, 30, 15, cAccent, cBg); drawText(F_TXT, nb, cx, 192, AL_C, onColor(cAccent), cAccent); }
+        else drawText(F_TXT, nb, cx, 192, AL_C, cText, cBg);
+      }
+      snprintf(ib, sizeof ib, "%s %d", MOF[t.tm_mon], t.tm_year + 1900);
+      drawText(F_TXT, ib, 120, 226, AL_C, cDim, cBg);
+    }
+    return;
+  }
+  if (st == 7) {                                              // sidebar: stacked clock on the left, date + weather panel on the right
+    if (full) {
+      drawRRect(150, 10, 82, 220, 26, cPanel, cBg);
+      drawText(F_CAP, WDU[t.tm_wday], 191, 42, AL_C, cAccent, cPanel);
+      snprintf(ib, sizeof ib, "%d", t.tm_mday);
+      drawText(F_VAL, ib, 191, 80, AL_C, cText, cPanel);
+      static const char* const MOU[12] = {"JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"};
+      drawText(F_CAP, MOU[t.tm_mon], 191, 100, AL_C, cDim, cPanel);
+      tft.fillRect(171, 114, 40, 1, cTrack);
+    }
+    if (newMin) {
+      char hb[4]; snprintf(hb, sizeof hb, cfg.h24 ? "%02d" : "%d", h);
+      drawText(F_TIME, hb, 78, 112, AL_C, cTime, cBg, 130);
+      snprintf(ib, sizeof ib, "%02d", t.tm_min);
+      drawText(F_TIME, ib, 78, 194, AL_C, cAccent, cBg, 130);
+      if (!cfg.h24) drawText(F_CAP, ampm, 78, 226, AL_C, cDim, cBg, 40);
+    }
+    if (newWx) {
+      if (wx.valid) {
+        drawIcon(*wxIcon(wx.code, wx.isDay), 191, 144, 32, cPanel);
+        snprintf(ib, sizeof ib, "%d%c", (int)roundf(wx.temp), 0xB0);
+        drawText(F_VAL, ib, 191, 196, AL_C, cText, cPanel, 62);
+        snprintf(ib, sizeof ib, "%d%%", wx.hum);
+        drawText(F_TXT, ib, 191, 219, AL_C, cDim, cPanel, 44);
+      } else drawText(F_TXT, "--", 191, 170, AL_C, cDim, cPanel, 60);
+    }
+    return;
+  }
+  // st == 8: date as the hero, time as the caption
+  if (full) {
+    drawText(F_TXT, MOFU[t.tm_mon], 120, 44, AL_C, cAccent, cBg);
+    snprintf(ib, sizeof ib, "%d", t.tm_mday);
+    drawText(F_TIME, ib, 120, 128, AL_C, cTime, cBg, 150);
+    drawText(F_TXT, WDF[t.tm_wday], 120, 166, AL_C, cDim, cBg);
+    tft.fillRect(60, 182, 120, 1, cTrack);
   }
   if (newMin) {
-    lastMin = t.tm_min;
-    if (cfg.h24) snprintf(tb, sizeof tb, "%02d:%02d", h, t.tm_min); else snprintf(tb, sizeof tb, "%d:%02d", h, t.tm_min);
-    drawText(F_TIME, tb, 120, 140, AL_C, cText, cBg, 212);
-    if (cfg.showDate) drawText(F_TXT, db, 120, 184, AL_C, cAccent, cBg, 190);
-    if (!cfg.h24) drawText(F_CAP, ampm, 224, 184, AL_R, cDim, cBg);
+    drawText(F_VAL, tb, 120, 222, AL_C, cText, cBg, 150);
+    if (!cfg.h24) drawText(F_CAP, ampm, 214, 222, AL_R, cDim, cBg);
   }
 }
 
@@ -512,7 +599,7 @@ void renderClock() {
   if (syncing) { syncing = false; fullRedraw = true; }
   time_t now = time(nullptr); struct tm t; localtime_r(&now, &t);
   if (t.tm_mday != lastDay) { lastDay = t.tm_mday; fullRedraw = true; }
-  uint8_t st = cfg.clockStyle > 5 ? 0 : cfg.clockStyle;
+  uint8_t st = cfg.clockStyle > 8 ? 0 : cfg.clockStyle;
   bool cards = (st == 2), info = cfg.showInfo;
   uint16_t panel = cards ? cPanel : cBg;
   bool full = fullRedraw;
@@ -521,7 +608,7 @@ void renderClock() {
     clearScreen();
     if (cards) {
       drawRRect(6, 6, 228, info ? 146 : 228, 26, cPanel, cBg);
-      if (info) { drawRRect(6, 158, 110, 76, 22, cPanel, cBg); drawRRect(124, 158, 110, 76, 22, cPanel, cBg); }
+      if (info) { drawRRect(6, 158, 112, 76, 22, cPanel, cBg); drawRRect(122, 158, 112, 76, 22, cPanel, cBg); }
     }
   }
   if (st >= 3) { renderClockExtra(st, t, full); return; }
@@ -532,7 +619,7 @@ void renderClock() {
     char tb[8]; int h = t.tm_hour;
     if (!cfg.h24) { h %= 12; if (!h) h = 12; }
     snprintf(tb, sizeof tb, cfg.h24 ? "%02d:%02d" : "%d:%02d", h, t.tm_min);
-    drawText(F_TIME, tb, 120, tBase, AL_C, st == 1 ? cAccent : cText, panel, 212);
+    drawText(F_TIME, tb, 120, tBase, AL_C, st == 1 ? cAccent : cTime, panel, 212);
     if (cfg.showDate) {
       char db[24]; snprintf(db, sizeof db, "%s, %s %d", WD[t.tm_wday], MO[t.tm_mon], t.tm_mday);
       drawText(F_TXT, db, 120, dBase, AL_C, st == 1 ? blendPct(cAccent, cBg, 80) : cDim, panel, 190);
@@ -616,10 +703,10 @@ void renderWeather() {
     const char* tu[4] = {"%", cfg.fahrenheit ? "mph" : "km/h", unit, unit};
     const char* tc[4] = {"%", cfg.fahrenheit ? "MPH" : "KM/H", unit, unit};
     for (int i = 0; i < 4; i++) {
-      int x = (i & 1) ? 124 : 6, y = (i >> 1) ? 174 : 110;
-      drawRRect(x, y, 110, 60, 20, cPanel, cBg);
-      drawIcon(*ti[i], x + 20, y + 15, 16, cPanel, tov[i]);
-      drawText(F_CAP, tl[i], x + 34, y + 19, AL_L, cDim, cPanel);
+      int x = (i & 1) ? 122 : 6, y = (i >> 1) ? 174 : 110;
+      drawRRect(x, y, 112, 60, 20, cPanel, cBg);
+      drawIcon(*ti[i], x + 18, y + 15, 16, cPanel, tov[i]);
+      drawText(F_CAP, tl[i], x + 30, y + 19, AL_L, cDim, cPanel);
       int w = drawText(F_VAL, val[i], x + 14, y + 54, AL_L, cText, cPanel);
       bool tight = (w + 3 + textW(F_TXT, tu[i]) > 90);          // long units fall back to the small caps font
       drawText(tight ? F_CAP : F_TXT, tight ? tc[i] : tu[i], x + 14 + w + 3, y + 54, AL_L, cDim, cPanel);
@@ -650,6 +737,54 @@ void renderWeather() {
     drawIcon(IC_WIND, 124, 221, 16, cBg);
     snprintf(tb, sizeof tb, "%d %s", (int)roundf(wx.wind), cfg.fahrenheit ? "mph" : "km/h");
     drawText(F_TXT, tb, 138, 228, AL_L, cText, cBg);
+    return;
+  }
+  if (cfg.weatherStyle == 4) {                                   // hourly: now + next four hours, with temperature bars
+    drawIcon(*wxIcon(wx.code, wx.isDay), 30, 34, 32, cBg);
+    snprintf(tb, sizeof tb, "%d%c", (int)roundf(wx.temp), 0xB0);
+    drawText(F_VAL, tb, 54, 48, AL_L, cText, cBg, 70);
+    drawText(F_TXT, wxShort(wx.code, wx.isDay), 228, 46, AL_R, cDim, cBg);
+    tft.fillRect(20, 62, 200, 1, cTrack);
+    int hnow = -1;
+    if (timeValid()) { time_t n = time(nullptr); struct tm lt; localtime_r(&n, &lt); hnow = lt.tm_hour; }
+    float tmin = wx.htemp[0], tmax = wx.htemp[0];
+    for (int i = 1; i < 5; i++) { tmin = min(tmin, wx.htemp[i]); tmax = max(tmax, wx.htemp[i]); }
+    for (int i = 0; i < 5; i++) {
+      int cx = 24 + 48 * i;
+      char lb[8] = "";
+      if (i == 0) strcpy(lb, "NOW");
+      else if (hnow >= 0) {
+        int hh = (hnow + i) % 24;
+        if (cfg.h24) snprintf(lb, sizeof lb, "%02d:00", hh);
+        else snprintf(lb, sizeof lb, "%d%s", (hh % 12) ? hh % 12 : 12, hh < 12 ? "AM" : "PM");
+      }
+      drawText(F_CAP, lb, cx, 92, AL_C, i == 0 ? cAccent : cDim, cBg);
+      drawIcon(*wxIcon(wx.hcode[i], wx.hday[i]), cx, 118, 32, cBg);
+      snprintf(tb, sizeof tb, "%d%c", (int)roundf(wx.htemp[i]), 0xB0);
+      drawText(F_TXT, tb, cx, 162, AL_C, cText, cBg);
+      int bh = (tmax > tmin) ? 18 + (int)(32 * (wx.htemp[i] - tmin) / (tmax - tmin)) : 34;
+      drawRRect(cx - 9, 228 - bh, 18, bh, 9, i == 0 ? cAccent : cTrack, cBg);
+    }
+    return;
+  }
+  if (cfg.weatherStyle == 5) {                                   // list: big temperature, then labelled rows
+    snprintf(tb, sizeof tb, "%d%c", (int)roundf(wx.temp), 0xB0);
+    if (textW(F_TIME, tb) > 140) tb[strlen(tb) - 1] = 0;
+    drawText(F_TIME, tb, 16, 80, AL_L, cText, cBg);
+    drawIcon(*wxIcon(wx.code, wx.isDay), 192, 54, 64, cBg);
+    drawText(F_CAP, wxShort(wx.code, wx.isDay), 18, 108, AL_L, cAccent, cBg);
+    const char* lab[4] = {"FEELS LIKE", "HUMIDITY", "WIND", "HIGH / LOW"};
+    char val[4][20];
+    snprintf(val[0], 20, "%d%c", (int)roundf(wx.feels), 0xB0);
+    snprintf(val[1], 20, "%d%%", wx.hum);
+    snprintf(val[2], 20, "%d %s", (int)roundf(wx.wind), cfg.fahrenheit ? "mph" : "km/h");
+    snprintf(val[3], 20, "%d%c / %d%c", (int)roundf(wx.hi), 0xB0, (int)roundf(wx.lo), 0xB0);
+    for (int i = 0; i < 4; i++) {
+      int base = 146 + 27 * i;
+      if (i) tft.fillRect(16, base - 22, 208, 1, cTrack);
+      drawText(F_CAP, lab[i], 18, base, AL_L, cDim, cBg);
+      drawText(F_TXT, val[i], 222, base, AL_R, cText, cBg);
+    }
     return;
   }
   // forecast
@@ -840,6 +975,8 @@ void gifTick() {
     gif->reset();
     if (cfg.gifAuto && (uint32_t)(millis() - gifStartMs) >= (uint32_t)cfg.gifSecs * 1000UL) gifSwitchPending = true;
   }
+  if (d <= 10) d = 100;                               // like browsers: 0/1 centisecond delays mean 100 ms
+  d = (d * 100) / (cfg.gifSpeed < 10 ? 100 : cfg.gifSpeed);   // user speed setting (100 = the GIF's own speed)
   if (d < 10) d = 10;
   gifNext = start + d;                                // the frame's time includes its decode time, so loops keep the GIF's own pace
 }
