@@ -91,6 +91,7 @@ dt{color:var(--dim)}dd{margin:0;text-align:right;font-variant-numeric:tabular-nu
       <button class="chip" data-p="1" aria-pressed="false">Weather</button>
       <button class="chip" data-p="2" aria-pressed="false">Status</button>
       <button class="chip" data-p="3" aria-pressed="false">GIF</button>
+      <button class="chip" data-p="4" aria-pressed="false">Calendar</button>
     </div>
   </div>
 
@@ -99,6 +100,7 @@ dt{color:var(--dim)}dd{margin:0;text-align:right;font-variant-numeric:tabular-nu
     <button role="tab" data-t="place" aria-selected="false">Weather and time</button>
     <button role="tab" data-t="mqtt" aria-selected="false">Home Assistant</button>
     <button role="tab" data-t="gifs" aria-selected="false">GIFs</button>
+    <button role="tab" data-t="tools" aria-selected="false">Timer</button>
     <button role="tab" data-t="sys" aria-selected="false">Device</button>
   </nav>
 
@@ -112,7 +114,21 @@ dt{color:var(--dim)}dd{margin:0;text-align:right;font-variant-numeric:tabular-nu
           <option value="3">Status only</option>
           <option value="4">GIF only</option>
           <option value="5">Custom playlist</option>
+          <option value="6">Calendar only</option>
         </select></label>
+    </fieldset>
+    <fieldset><legend>Calendar</legend>
+      <label><span>Calendar style<small>Month grid, Tiles, or Focus (big day + small month)</small></span>
+        <select data-k="calStyle" data-num>
+          <option value="0">Month</option><option value="1">Tiles</option><option value="2">Focus</option>
+        </select></label>
+      <label><span>Week starts on Monday</span><input type="checkbox" data-k="calMon"></label>
+      <label><span>Color the weekend days</span><input type="checkbox" data-k="calWeekend"></label>
+      <label><span>Weekend color</span><input type="color" data-k="weekendColor"></label>
+      <div class="sw" data-for="weekendColor"></div>
+      <label><span>Show days of the neighbouring months<small>Dimmed</small></span><input type="checkbox" data-k="calOther"></label>
+      <label><span>Clock in the calendar header</span><input type="checkbox" data-k="calClock"></label>
+      <p class="dim" style="margin:8px 0">Show it with the Calendar button above, the Calendar checkbox in Pages, "Calendar only", or as a playlist item. Today uses your accent color.</p>
     </fieldset>
     <fieldset><legend>Playlist</legend>
       <p class="dim" style="margin:8px 0">Used when Display mode is "Custom playlist". Each item shows for its own time. Use the same page twice with different faces to alternate between them.</p>
@@ -161,6 +177,7 @@ dt{color:var(--dim)}dd{margin:0;text-align:right;font-variant-numeric:tabular-nu
         <label><input type="checkbox" data-bit="2"> Weather</label>
         <label><input type="checkbox" data-bit="4"> Status</label>
         <label><input type="checkbox" data-bit="8"> GIF</label>
+        <label><input type="checkbox" data-bit="16"> Calendar</label>
       </div>
       <label><span>Seconds per page</span><input type="number" min="3" max="600" data-k="rotateSec" data-num></label>
     </fieldset>
@@ -235,6 +252,31 @@ dt{color:var(--dim)}dd{margin:0;text-align:right;font-variant-numeric:tabular-nu
     </fieldset>
   </section>
 
+  <section id="tools">
+    <fieldset><legend>Timer</legend>
+      <div class="row" id="tpre"></div>
+      <label><span>Minutes</span><input type="number" id="tmin" min="0" max="99" value="5"></label>
+      <label><span>Seconds</span><input type="number" id="tsec" min="0" max="59" value="0"></label>
+      <div class="row">
+        <button class="btn primary" id="tstart" type="button">Start timer</button>
+        <button class="btn" id="tpause" type="button">Pause</button>
+        <button class="btn" id="tstop" type="button">Cancel</button>
+      </div>
+      <p class="dim" id="tstat">No timer running</p>
+    </fieldset>
+    <fieldset><legend>Stopwatch</legend>
+      <div class="row">
+        <button class="btn primary" id="swstart" type="button">Start</button>
+        <button class="btn" id="swstop" type="button">Stop</button>
+        <button class="btn" id="swlap" type="button">Lap</button>
+        <button class="btn" id="swreset" type="button">Reset</button>
+      </div>
+      <p class="dim" id="swstat">Stopwatch is off</p>
+    </fieldset>
+    <div class="row"><button class="btn" id="toolclose" type="button">Back to the normal display</button></div>
+    <p class="dim">The timer and stopwatch take over the screen while they run. When a timer ends the screen flashes for up to a minute, or until you press Back.</p>
+  </section>
+
   <section id="sys">
     <fieldset id="fswarn" hidden><legend>Storage problem</legend>
       <p>The device could not open its storage, so settings and GIFs can't be saved. Formatting erases everything stored on the device, including the original firmware's GIFs and settings.</p>
@@ -269,8 +311,8 @@ $('#theme').onclick=()=>{const d=matchMedia('(prefers-color-scheme:dark)').match
 $$('#tabs button').forEach(b=>b.onclick=()=>{$$('#tabs button').forEach(x=>x.setAttribute('aria-selected',x===b));$$('main section').forEach(s=>s.classList.toggle('on',s.id===b.dataset.t));if(b.dataset.t==='gifs')loadGifs()});
 
 /* playlist */
-const PGN=['Clock','Weather','Status','GIF'];
-const FACES=[['Classic','Accent','Cards','Stacked','Day progress','Glance','Week','Sidebar','Date'],['Forecast','Card','Tiles','Range','Hourly','List'],[],[]];
+const PGN=['Clock','Weather','Status','GIF','Calendar'];
+const FACES=[['Classic','Accent','Cards','Stacked','Day progress','Glance','Week','Sidebar','Date'],['Forecast','Card','Tiles','Range','Hourly','List'],[],[],['Month','Tiles','Focus']];
 let plist=[];
 const opts=(a,sel)=>a.map((n,i)=>`<option value="${i}"${i===sel?' selected':''}>${n}</option>`).join('');
 function renderList(){
@@ -322,6 +364,7 @@ function preview(){
   if(p===0)h=`<div class="big">${(st.time||'--:--').slice(0,5)}</div><div class="mid">${st.date||''}</div>`;
   else if(p===1)h=st.temp!==undefined?`<div class="big">${Math.round(st.temp)}°</div><div class="mid">${st.condition}</div><div class="sm">High ${Math.round(st.hi)}  Low ${Math.round(st.lo)}</div>`:'<div class="sm">Fetching weather…</div>';
   else if(p===2)h=`<div class="mid">${st.ip}</div><div class="sm">${st.rssi} dBm · ${Math.round(st.heap/1024)} KB free</div>`;
+  else if(p===4)h=`<div class="mid">Calendar</div><div class="sm">${st.date||''}</div>`;
   else h=`<div class="mid">GIF</div><div class="sm">${cfg.gif||'none selected'}</div>`;
   s.innerHTML=h;
   $$('.chip').forEach(c=>c.setAttribute('aria-pressed',+c.dataset.p===p));
@@ -333,7 +376,7 @@ async function poll(){
     st=await api('/api/status');
     $('#fswarn').hidden=st.fs!==false;
     $('#title').firstChild.textContent=st.hostname;$('#sub').textContent=`${st.ip} · v${st.version}`;
-    preview();
+    preview();toolStatus();
     $('#stats').innerHTML=[['Address',st.ip],['Signal',st.rssi+' dBm'],['Free memory',Math.round(st.heap/1024)+' KB'],['Uptime',up(st.uptime)],['MQTT',st.mqtt],['Storage',Math.round(st.fsUsed/1024)+' of '+Math.round(st.fsTotal/1024)+' KB'],['Firmware','v'+st.version]].map(r=>`<dt>${r[0]}</dt><dd>${r[1]}</dd>`).join('');
   }catch(e){$('#sub').textContent='Device not responding'}
 }
@@ -368,6 +411,21 @@ $('#gfile').onchange=e=>{
   x.onerror=()=>{b.disabled=false;b.textContent='Upload a GIF';toast('Upload failed')};
   x.open('POST','/api/gif');x.send(fd);e.target.value='';
 };
+
+/* timer + stopwatch */
+const tool=(cmd,secs)=>api('/api/tool?cmd='+cmd+(secs!==undefined?'&secs='+secs:''),{method:'POST'}).then(poll).catch(e=>toast(e.message));
+const fm=s=>String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0');
+[[60,'1 min'],[180,'3 min'],[300,'5 min'],[600,'10 min'],[900,'15 min'],[1800,'30 min']].forEach(([s,l])=>{const b=document.createElement('button');b.type='button';b.className='btn';b.textContent=l;b.onclick=()=>tool('timer_start',s);$('#tpre').appendChild(b)});
+$('#tstart').onclick=()=>{const s=(+$('#tmin').value||0)*60+(+$('#tsec').value||0);if(s<1){toast('Set a time first');return}tool('timer_start',s)};
+$('#tpause').onclick=()=>tool(st.tmRun?'timer_pause':'timer_resume');
+$('#tstop').onclick=()=>tool('close');
+$('#swstart').onclick=()=>tool('sw_start');$('#swstop').onclick=()=>tool('sw_stop');$('#swlap').onclick=()=>tool('sw_lap');$('#swreset').onclick=()=>tool('sw_reset');
+$('#toolclose').onclick=()=>tool('close');
+function toolStatus(){
+  $('#tstat').textContent=st.tool===1?(st.tmDone?"Time's up!":(st.tmRun?'Running: ':'Paused: ')+fm(st.tmLeft)):'No timer running';
+  $('#tpause').textContent=st.tmRun?'Pause':'Resume';
+  $('#swstat').textContent=st.tool===2?(st.swRun?'Running: ':'Stopped: ')+fm(Math.floor(st.swMs/1000))+'.'+Math.floor(st.swMs%1000/100):'Stopwatch is off';
+}
 
 /* system */
 $('#fmt').onclick=async()=>{if(confirm('Erase ALL stored data on the device?')){try{await api('/api/format',{method:'POST'});toast('Formatted');setTimeout(()=>location.reload(),1200)}catch(e){toast(e.message)}}};

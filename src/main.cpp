@@ -29,7 +29,7 @@ WiFiClient netClient;
 PubSubClient mqtt(netClient);
 AnimatedGIF* gif = nullptr;
 
-uint16_t cBg, cPanel, cText, cDim, cTrack, cAccent, cTime;
+uint16_t cBg, cPanel, cText, cDim, cTrack, cAccent, cTime, cWeekend;
 char apName[24];
 
 struct Weather {
@@ -49,8 +49,20 @@ uint32_t bootCount = 0;
 uint32_t pageSince = 0, lastSlow = 0, lastBars = 0, gifNext = 0;
 int lastMin = -1, lastSec = -1, gifOffX = 0, gifOffY = 0;
 int lastDay = -1;
-uint8_t vClock = 0, vWeather = 0;   // faces shown right now (from the playlist item, or from the settings)
+uint8_t vClock = 0, vWeather = 0, vCal = 0;   // faces shown right now (from the playlist item, or from the settings)
 int curSlot = 0;                    // current playlist item
+
+// timer + stopwatch state (they take over the display while active)
+enum { TOOL_NONE = 0, TOOL_TIMER = 1, TOOL_SW = 2 };
+uint8_t toolMode = TOOL_NONE;
+bool toolFull = false;
+uint32_t tmTotalMs = 0, tmEndMs = 0, tmLeftMs = 0, tmDoneAt = 0;
+bool tmRunning = false, tmDone = false;
+uint32_t swStartMs = 0, swAccum = 0, swLastLap = 0, swLaps[3] = {0, 0, 0};
+bool swRunning = false;
+uint8_t swLapN = 0;
+uint16_t swLapTotal = 0;
+void closeTool();
 
 // mqtt
 char tStatus[64], tState[64], tBrt[64], tBrtSet[64], tPageSet[64], tGifNext[64];
@@ -107,6 +119,7 @@ void rebuildColors() {
   }
   cAccent = hexTo565(cfg.accent);
   cTime = (strcasecmp(cfg.timeColor, "#FFFFFF") == 0) ? cText : hexTo565(cfg.timeColor);   // white = follow the theme
+  cWeekend = hexTo565(cfg.weekendColor);
 }
 
 bool timeValid() { return time(nullptr) > 1700000000; }
@@ -141,7 +154,8 @@ bool pageUsable(uint8_t p) {
 uint8_t usableCount() { uint8_t n = 0; for (uint8_t p = 0; p < PAGE_COUNT; p++) n += pageUsable(p); return n; }
 bool rotating() { return cfg.mode == 0 && usableCount() > 1; }
 bool playlistActive() { return cfg.mode == 5 && cfg.listN > 0; }
-static void applyFaces() { vClock = cfg.clockStyle; vWeather = cfg.weatherStyle; }
+static void applyFaces() { vClock = cfg.clockStyle; vWeather = cfg.weatherStyle; vCal = cfg.calStyle; }
+static int pinnedPage() { return (cfg.mode >= 1 && cfg.mode <= 4) ? cfg.mode - 1 : (cfg.mode == 6 ? PAGE_CAL : -1); }
 static bool slotUsable(int i) { return cfg.list[i].page < PAGE_COUNT && (cfg.list[i].page != PAGE_GIF || gifOk); }
 static void enterSlot(int i) {                          // show one playlist item: its page and its face
   curSlot = i;
@@ -149,6 +163,7 @@ static void enterSlot(int i) {                          // show one playlist ite
   const Slot& sl = cfg.list[i];
   if (sl.page == PAGE_CLOCK) vClock = sl.style;
   if (sl.page == PAGE_WEATHER) vWeather = sl.style;
+  if (sl.page == PAGE_CAL) vCal = sl.style;
   setPage(sl.page);
 }
 uint8_t nextPageFrom(uint8_t cur) {
@@ -277,6 +292,18 @@ static uint16_t blendPct(uint16_t a, uint16_t b, int pct) {            // pct % 
   return (r << 11) | (g << 5) | bl;
 }
 
+struct Shp { int x, y, w, h, r; uint16_t inner, outer; };   // rounded shape behind text: inner inside, outer outside
+static inline uint16_t shapePix(const Shp* s, int px, int py) {
+  int lx = px - s->x, ly = py - s->y;
+  if (lx < 0 || ly < 0 || lx >= s->w || ly >= s->h) return s->outer;
+  int cx = lx < s->r ? s->r : (lx >= s->w - s->r ? s->w - s->r : -1);
+  int cy = ly < s->r ? s->r : (ly >= s->h - s->r ? s->h - s->r : -1);
+  if (cx < 0 || cy < 0) return s->inner;
+  float dx = lx + 0.5f - cx, dy = ly + 0.5f - cy;
+  float cov = s->r - sqrtf(dx * dx + dy * dy) + 0.5f;
+  return (cov <= 0) ? s->outer : (cov >= 1) ? s->inner : mix565(s->outer, s->inner, (uint8_t)(cov * 15 + 0.5f));
+}
+
 static bool findGlyph(const Font& f, uint8_t code, Glyph& out) {
   for (uint8_t i = 0; i < f.n; i++) {
     memcpy_P(&out, &f.g[i], sizeof(Glyph));
@@ -286,7 +313,7 @@ static bool findGlyph(const Font& f, uint8_t code, Glyph& out) {
 }
 
 // Draws a string with its baseline at 'base'. Returns the text width. padW clears a wider box.
-static int drawText(const Font& f, const char* s, int x, int base, uint8_t al, uint16_t fg, uint16_t bg, int padW = 0) {
+static int drawText(const Font& f, const char* s, int x, int base, uint8_t al, uint16_t fg, uint16_t bg, int padW = 0, const Shp* shp = nullptr) {
   Glyph gl[24]; int gx[24]; Rle dec[24]; int ng = 0, w = 0;
   for (const uint8_t* p = (const uint8_t*)s; *p && ng < 24; p++) {
     if (*p == ' ') { w += f.space; continue; }
@@ -312,13 +339,13 @@ static int drawText(const Font& f, const char* s, int x, int base, uint8_t al, u
   tft.setAddrWindow(x0, top + rs, box, re - rs);
   for (int r = 0; r < H; r++) {
     bool vis = (r >= rs && r < re);
-    if (vis) for (int i = 0; i < box; i++) rowBuf[i] = bg;
+    if (vis) for (int i = 0; i < box; i++) rowBuf[i] = shp ? shapePix(shp, x0 + i, top + r) : bg;
     for (int k = 0; k < ng; k++) {
       int gr = r - (f.asc - gl[k].dy);
       if (gr < 0 || gr >= gl[k].h) continue;
       for (int c = 0; c < gl[k].w; c++) {
         uint8_t a = rleNext(dec[k]);            // every glyph row is decoded exactly once, in order
-        if (a && vis) { int px = t0 + gx[k] + c; if (px >= 0 && px < box) rowBuf[px] = lut[a]; }
+        if (a && vis) { int px = t0 + gx[k] + c; if (px >= 0 && px < box) rowBuf[px] = shp ? mix565(shapePix(shp, x0 + px, top + r), fg, a) : lut[a]; }
       }
     }
     if (vis) tft.pushPixels(rowBuf, box);
@@ -466,7 +493,7 @@ static void drawInfo(uint8_t st) {
     drawIcon(ic, icx, icy, 16, bg, ov);
     drawText(F_CAP, lab, lx, lb, AL_L, lcol, bg);
     int w = drawText(F_VAL, val, vx, vb, AL_L, vcol, bg, card ? 88 : 92);
-    if (un[0]) drawText(F_TXT, un, vx + w + 3, vb, AL_L, ucol, bg);
+    if (un[0] && (!card || w + 3 + textW(F_SML, un) <= 92)) drawText(F_SML, un, vx + w + 3, vb, AL_L, ucol, bg);   // never past the box edge
   }
 }
 
@@ -560,7 +587,7 @@ static void renderClockExtra(uint8_t st, const struct tm& t, bool full) {
         int cx = 120 + i * 32;
         char nb[4]; snprintf(nb, sizeof nb, "%d", lt.tm_mday);
         drawText(F_CAP, WD2[lt.tm_wday], cx, 162, AL_C, i == 0 ? cAccent : cDim, cBg);
-        if (i == 0) { drawRRect(cx - 15, 170, 30, 30, 15, cAccent, cBg); drawText(F_TXT, nb, cx, 192, AL_C, onColor(cAccent), cAccent); }
+        if (i == 0) { Shp sh = {cx - 15, 170, 30, 30, 15, cAccent, cBg}; drawRRect(sh.x, sh.y, sh.w, sh.h, sh.r, cAccent, cBg); drawText(F_TXT, nb, cx, 192, AL_C, onColor(cAccent), cAccent, 0, &sh); }
         else drawText(F_TXT, nb, cx, 192, AL_C, cText, cBg);
       }
       snprintf(ib, sizeof ib, "%s %d", MOF[t.tm_mon], t.tm_year + 1900);
@@ -722,15 +749,13 @@ void renderWeather() {
     int32_t tov[4] = {-1, -1, C565(255, 159, 10), C565(100, 210, 255)};
     const char* tl[4] = {"HUMIDITY", "WIND", "HIGH", "LOW"};
     const char* tu[4] = {"%", cfg.fahrenheit ? "mph" : "km/h", unit, unit};
-    const char* tc[4] = {"%", cfg.fahrenheit ? "MPH" : "KM/H", unit, unit};
     for (int i = 0; i < 4; i++) {
       int x = (i & 1) ? 122 : 6, y = (i >> 1) ? 174 : 110;
       drawRRect(x, y, 112, 60, 20, cPanel, cBg);
       drawIcon(*ti[i], x + 18, y + 15, 16, cPanel, tov[i]);
       drawText(F_CAP, tl[i], x + 30, y + 19, AL_L, cDim, cPanel);
       int w = drawText(F_VAL, val[i], x + 14, y + 54, AL_L, cText, cPanel);
-      bool tight = (w + 3 + textW(F_TXT, tu[i]) > 90);          // long units fall back to the small caps font
-      drawText(tight ? F_CAP : F_TXT, tight ? tc[i] : tu[i], x + 14 + w + 3, y + 54, AL_L, cDim, cPanel);
+      if (w + 3 + textW(F_SML, tu[i]) <= 92) drawText(F_SML, tu[i], x + 14 + w + 3, y + 54, AL_L, cDim, cPanel);   // never past the box edge
     }
     return;
   }
@@ -741,7 +766,8 @@ void renderWeather() {
     if (textW(F_TIME, tb) > 146) tb[strlen(tb) - 1] = 0;
     drawText(F_TIME, tb, 120, 114, AL_C, cText, cBg);
     drawGradBar(24, 134, 192, 12, cBg);
-    float pos = (wx.hi > wx.lo) ? (wx.temp - wx.lo) / (wx.hi - wx.lo) : 0.5f;
+    int ti = (int)roundf(wx.temp), hiR = (int)roundf(wx.hi), loR = (int)roundf(wx.lo);
+    float pos = (hiR > loR) ? (float)(ti - loR) / (float)(hiR - loR) : 0.5f;    // same rounded values the labels show
     pos = constrain(pos, 0.0f, 1.0f);
     int mx = 24 + (int)(pos * 192), my = 140;
     tft.fillCircle(mx, my, 9, cBg);
@@ -768,8 +794,10 @@ void renderWeather() {
     tft.fillRect(20, 62, 200, 1, cTrack);
     int hnow = -1;
     if (timeValid()) { time_t n = time(nullptr); struct tm lt; localtime_r(&n, &lt); hnow = lt.tm_hour; }
-    float tmin = wx.htemp[0], tmax = wx.htemp[0];
-    for (int i = 1; i < 5; i++) { tmin = min(tmin, wx.htemp[i]); tmax = max(tmax, wx.htemp[i]); }
+    int hv[5];
+    for (int i = 0; i < 5; i++) hv[i] = (int)roundf(wx.htemp[i]);                // bars follow the numbers shown
+    int tmin = hv[0], tmax = hv[0];
+    for (int i = 1; i < 5; i++) { tmin = min(tmin, hv[i]); tmax = max(tmax, hv[i]); }
     for (int i = 0; i < 5; i++) {
       int cx = 24 + 48 * i;
       char lb[8] = "";
@@ -781,9 +809,9 @@ void renderWeather() {
       }
       drawText(F_CAP, lb, cx, 92, AL_C, i == 0 ? cAccent : cDim, cBg);
       drawIcon(*wxIcon(wx.hcode[i], wx.hday[i]), cx, 118, 32, cBg);
-      snprintf(tb, sizeof tb, "%d%c", (int)roundf(wx.htemp[i]), 0xB0);
+      snprintf(tb, sizeof tb, "%d%c", hv[i], 0xB0);
       drawText(F_TXT, tb, cx, 162, AL_C, cText, cBg);
-      int bh = (tmax > tmin) ? 18 + (int)(32 * (wx.htemp[i] - tmin) / (tmax - tmin)) : 34;
+      int bh = (tmax > tmin) ? 18 + (32 * (hv[i] - tmin)) / (tmax - tmin) : 34;       // equal temperatures = equal bars
       drawRRect(cx - 9, 228 - bh, 18, bh, 9, i == 0 ? cAccent : cTrack, cBg);
     }
     return;
@@ -826,6 +854,169 @@ void renderWeather() {
     drawText(F_VAL, tb, cx, 208, AL_C, cText, cBg);
     snprintf(tb, sizeof tb, "%d%c", (int)roundf(wx.dlo[i]), 0xB0);
     drawText(F_TXT, tb, cx, 230, AL_C, cDim, cBg);
+  }
+}
+
+// ------------------------------------------------------------------ calendar
+// Styles: 0 month grid, 1 tiles, 2 focus (big day + small month). Options: Monday/Sunday first,
+// weekend color, neighbouring-month days, header clock. Drawn once per day, clock once per minute.
+static int daysInMonth(int y, int m) {
+  static const uint8_t d[12] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+  if (m == 1 && ((y % 4 == 0 && y % 100 != 0) || y % 400 == 0)) return 29;
+  return d[m];
+}
+static const char* const WDFU[7] = {"SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"};
+static const char* const L_MON[7] = {"MO", "TU", "WE", "TH", "FR", "SA", "SU"};
+
+static void calTime(const struct tm& t, int x, int base, uint8_t al, const Font& f) {
+  char tb[12];
+  if (cfg.h24) snprintf(tb, sizeof tb, "%02d:%02d", t.tm_hour, t.tm_min);
+  else { int h12 = t.tm_hour % 12; if (!h12) h12 = 12; snprintf(tb, sizeof tb, "%d:%02d %s", h12, t.tm_min, t.tm_hour < 12 ? "AM" : "PM"); }
+  drawText(f, tb, x, base, al, cDim, cBg, (&f == &F_CAP) ? 70 : (cfg.h24 ? 54 : 88));
+}
+
+static void drawCalendar(const struct tm& t) {
+  uint8_t st = vCal > 2 ? 0 : vCal;
+  int y = t.tm_year + 1900, m = t.tm_mon, dim = daysInMonth(y, m);
+  int first = ((t.tm_wday - (t.tm_mday - 1)) % 7 + 7) % 7;          // weekday of the 1st (0 = Sunday)
+  int off = (first - (cfg.calMon ? 1 : 0) + 7) % 7;                  // empty cells before the 1st
+  int rows = (off + dim + 6) / 7;
+  int pm = (m + 11) % 12, pdim = daysInMonth(m == 0 ? y - 1 : y, pm);
+  uint16_t dimmer = blendPct(cDim, cBg, 55);
+  const char* const* lab = cfg.calMon ? L_MON : WD2;
+  char yb[8], nb[4]; snprintf(yb, sizeof yb, "%d", y);
+  int labBase, base0, pitch;
+  const Font& nf = (st == 2) ? F_CAP : F_TXT;
+  if (st == 2) {
+    snprintf(nb, sizeof nb, "%d", t.tm_mday);
+    drawText(F_TIME, nb, 14, 80, AL_L, cTime, cBg);
+    drawText(F_CAP, WDFU[t.tm_wday], 116, 34, AL_L, cAccent, cBg);
+    drawText(F_TXT, MOF[m], 116, 62, AL_L, cText, cBg);
+    drawText(F_CAP, yb, 116, 84, AL_L, cDim, cBg);
+    tft.fillRect(14, 96, 212, 1, cTrack);
+    labBase = 114; base0 = 134; pitch = 20;
+  } else {
+    int mw = textW(F_TXT, MOF[m]), yw = textW(F_CAP, yb), tw = !cfg.calClock ? 0 : (cfg.h24 ? 56 : 90);
+    const char* mn = (14 + mw + 8 + yw + 8 + tw > 226) ? MO[m] : MOF[m];      // short month name if the clock needs the room
+    int w = drawText(F_TXT, mn, 14, 28, AL_L, cText, cBg);
+    drawText(F_CAP, yb, 14 + w + 8, 28, AL_L, cDim, cBg);
+    labBase = 54; base0 = 82; pitch = 29;
+  }
+  for (int c = 0; c < 7; c++) {
+    bool wk = cfg.calMon ? (c >= 5) : (c == 0 || c == 6);
+    drawText(F_CAP, lab[c], 24 + 32 * c, labBase, AL_C, (wk && cfg.calWeekend) ? cWeekend : cDim, cBg);
+  }
+  int shift = (6 - rows) * pitch / 2;                                // center months that need only 5 rows
+  for (int i = 0; i < rows * 7; i++) {
+    int r = i / 7, c = i % 7, cx = 24 + 32 * c, base = base0 + shift + pitch * r;
+    int dn; bool cur = true;
+    if (i < off) { dn = pdim - off + i + 1; cur = false; }
+    else if (i >= off + dim) { dn = i - off - dim + 1; cur = false; }
+    else dn = i - off + 1;
+    if (!cur && !cfg.calOther) continue;
+    bool wk = cfg.calMon ? (c >= 5) : (c == 0 || c == 6);
+    bool today = cur && dn == t.tm_mday;
+    snprintf(nb, sizeof nb, "%d", dn);
+    uint16_t fg = !cur ? dimmer : (wk && cfg.calWeekend) ? cWeekend : cText;
+    uint16_t onAcc = onColor(cAccent);
+    if (st == 1) {                                                   // tiles
+      uint16_t tile = today ? cAccent : !cur ? cBg : (wk && cfg.calWeekend) ? blendPct(cWeekend, cPanel, 28) : cPanel;
+      if (tile != cBg) {
+        Shp s = {cx - 15, base - 20, 30, 26, 8, tile, cBg};
+        drawRRect(s.x, s.y, s.w, s.h, s.r, tile, cBg);
+        drawText(nf, nb, cx, base, AL_C, today ? onAcc : fg, tile, 0, &s);
+      } else drawText(nf, nb, cx, base, AL_C, fg, cBg);
+    } else if (today) {                                              // month / focus: round highlight
+      int rr = (st == 2) ? 10 : 13, cy = base - ((st == 2) ? 5 : 7);
+      Shp s = {cx - rr, cy - rr, 2 * rr, 2 * rr, rr, cAccent, cBg};
+      drawRRect(s.x, s.y, s.w, s.h, s.r, cAccent, cBg);
+      drawText(nf, nb, cx, base, AL_C, onAcc, cAccent, 0, &s);
+    } else drawText(nf, nb, cx, base, AL_C, fg, cBg);
+  }
+}
+
+void renderCalendar() {
+  static bool syncing = false;
+  if (!timeValid()) {
+    syncing = true;
+    if (fullRedraw) { fullRedraw = false; tft.fillScreen(cBg); drawText(F_TXT, "Syncing time...", 120, 126, AL_C, cDim, cBg); }
+    return;
+  }
+  if (syncing) { syncing = false; fullRedraw = true; }
+  time_t now = time(nullptr); struct tm t; localtime_r(&now, &t);
+  if (t.tm_mday != lastDay) { lastDay = t.tm_mday; fullRedraw = true; }
+  bool newMin = (t.tm_min != lastMin);
+  if (fullRedraw) { fullRedraw = false; clearScreen(); drawCalendar(t); newMin = true; }
+  if (newMin) {
+    lastMin = t.tm_min;
+    if (cfg.calClock) { if (vCal == 2) calTime(t, 226, 84, AL_R, F_CAP); else calTime(t, 226, 28, AL_R, F_TXT); }
+  }
+}
+
+// ------------------------------------------------------------------ timer and stopwatch (take over the display)
+static void toolTime(char* out, size_t n, uint32_t sec) {
+  if (sec >= 6000) snprintf(out, n, "%u:%02u:%02u", (unsigned)(sec / 3600), (unsigned)((sec / 60) % 60), (unsigned)(sec % 60));
+  else snprintf(out, n, "%02u:%02u", (unsigned)(sec / 60), (unsigned)(sec % 60));
+}
+
+void renderTool(uint32_t now) {
+  static int lastShown = -1, lastTenth = -1, lastSig = -1;
+  static uint32_t lastFlash = 0;
+  static bool inv = false;
+  bool full = toolFull;
+  toolFull = false;
+  char tb[16];
+  if (toolMode == TOOL_TIMER) {
+    if (tmRunning && (int32_t)(now - tmEndMs) >= 0) { tmRunning = false; tmDone = true; tmDoneAt = now; full = true; inv = false; }
+    if (tmDone) {                                                   // time is up: flash the screen
+      if (full || now - lastFlash >= 500) {
+        lastFlash = now; inv = !inv;
+        uint16_t bg = inv ? cAccent : cBg, fg = inv ? onColor(cAccent) : cText;
+        tft.fillScreen(bg);
+        drawText(F_TIME, "00:00", 120, 118, AL_C, fg, bg);
+        drawText(F_TXT, "Time's up", 120, 166, AL_C, inv ? fg : cAccent, bg);
+      }
+      if (now - tmDoneAt > 60000UL) closeTool();
+      return;
+    }
+    uint32_t leftMs = tmRunning ? (uint32_t)(tmEndMs - now) : tmLeftMs;
+    int sec = (int)((leftMs + 999) / 1000);
+    if (full) { tft.fillScreen(cBg); lastShown = -1; drawText(F_CAP, "TIMER", 120, 44, AL_C, cDim, cBg); }
+    if (sec != lastShown) {
+      lastShown = sec;
+      toolTime(tb, sizeof tb, sec);
+      drawText(F_TIME, tb, 120, 128, AL_C, cTime, cBg, 212);
+      float frac = tmTotalMs ? (float)leftMs / tmTotalMs : 0;
+      int fw = max(12, (int)(192 * frac));
+      drawRRect(24, 152, 192, 12, 6, cTrack, cBg);
+      drawRRect(24, 152, fw, 12, 6, cAccent, cTrack);
+      drawText(F_CAP, tmRunning ? "RUNNING" : "PAUSED", 120, 196, AL_C, cDim, cBg, 90);
+    }
+    return;
+  }
+  uint32_t el = swAccum + (swRunning ? now - swStartMs : 0);      // stopwatch
+  int sec = (int)(el / 1000), tenth = (int)((el / 100) % 10);
+  if (full) { tft.fillScreen(cBg); lastShown = lastTenth = lastSig = -1; drawText(F_CAP, "STOPWATCH", 120, 40, AL_C, cDim, cBg); }
+  if (sec != lastShown) {
+    lastShown = sec;
+    toolTime(tb, sizeof tb, sec);
+    if (sec >= 6000) drawText(F_VAL, tb, 120, 112, AL_C, cTime, cBg, 212);
+    else drawText(F_TIME, tb, 120, 112, AL_C, cTime, cBg, 212);
+  }
+  if (tenth != lastTenth) { lastTenth = tenth; snprintf(tb, sizeof tb, ".%d", tenth); drawText(F_VAL, tb, 224, 152, AL_R, cAccent, cBg, 56); }
+  int sig = swLapN * 4 + (swRunning ? 1 : 0) + swLapTotal * 16;
+  if (sig != lastSig) {
+    lastSig = sig;
+    tft.fillRect(0, 164, 240, 76, cBg);
+    if (swLapN == 0) drawText(F_CAP, swRunning ? "RUNNING" : "STOPPED", 120, 200, AL_C, cDim, cBg);
+    for (int i = 0; i < swLapN; i++) {
+      int base = 184 + 22 * i;
+      snprintf(tb, sizeof tb, "LAP %u", (unsigned)(swLapTotal - i));
+      drawText(F_CAP, tb, 24, base, AL_L, cDim, cBg);
+      uint32_t l = swLaps[i];
+      snprintf(tb, sizeof tb, "%02u:%02u.%u", (unsigned)(l / 60000), (unsigned)((l / 1000) % 60), (unsigned)((l / 100) % 10));
+      drawText(F_TXT, tb, 216, base, AL_R, cText, cBg);
+    }
   }
 }
 
@@ -1032,8 +1223,8 @@ void applyConfig() {
     int first = 0;
     for (int i = 0; i < cfg.listN; i++) if (slotUsable(i)) { first = i; break; }
     enterSlot(first);
-  } else if (cfg.mode >= 1 && cfg.mode <= 4) {          // one page pinned
-    uint8_t t = cfg.mode - 1;
+  } else if (pinnedPage() >= 0) {                       // one page pinned
+    uint8_t t = pinnedPage();
     if (t == PAGE_GIF && !gifOk) t = PAGE_CLOCK;
     setPage(t);
   } else setPage(pageUsable(page) ? page : nextPageFrom(page));
@@ -1144,6 +1335,11 @@ void handleStatus() {
   }
   if (wx.valid) { d["temp"] = wx.temp; d["condition"] = wxText(wx.code); d["hi"] = wx.hi; d["lo"] = wx.lo; }
   d["mqtt"] = !cfg.mqttEnabled ? "off" : mqtt.connected() ? "connected" : "offline";
+  d["tool"] = toolMode;
+  uint32_t nowMs = millis();
+  d["tmLeft"] = tmRunning ? (uint32_t)((tmEndMs - nowMs + 999) / 1000) : (tmDone ? 0 : (uint32_t)((tmLeftMs + 999) / 1000));
+  d["tmRun"] = tmRunning; d["tmDone"] = tmDone;
+  d["swMs"] = swAccum + (swRunning ? nowMs - swStartMs : 0); d["swRun"] = swRunning;
   d["fs"] = fsOk;
   if (fsOk) { FSInfo fs; LittleFS.info(fs); d["fsUsed"] = fs.usedBytes; d["fsTotal"] = fs.totalBytes; }
   else { d["fsUsed"] = 0; d["fsTotal"] = 0; }
@@ -1168,7 +1364,50 @@ void handlePage() {
   }
   applyFaces();
   setPage(n);
-  if (cfg.mode >= 1 && cfg.mode <= 4) { cfg.mode = n + 1; saveSettings(cfg); }   // in single-page mode, this changes the pinned page
+  if (pinnedPage() >= 0) { cfg.mode = (n == PAGE_CAL) ? 6 : n + 1; saveSettings(cfg); }   // in single-page mode, this changes the pinned page
+  sendOk();
+}
+
+static void startTool(uint8_t mode) {
+  if (page == PAGE_GIF) stopGif();
+  toolMode = mode; toolFull = true;
+  if (mode == TOOL_TIMER) { swRunning = false; } else { tmRunning = false; tmDone = false; }
+}
+void closeTool() {                                       // back to the normal display
+  toolMode = TOOL_NONE; tmRunning = false; tmDone = false; swRunning = false;
+  setPage(page);
+}
+void handleTool() {
+  String c = server.arg("cmd");
+  long secs = server.arg("secs").toInt();
+  uint32_t now = millis();
+  if (c == "timer_start") {
+    secs = constrain(secs, 1, 5999);
+    tmTotalMs = (uint32_t)secs * 1000UL; tmEndMs = now + tmTotalMs; tmRunning = true; tmDone = false;
+    startTool(TOOL_TIMER);
+  } else if (c == "timer_pause") {
+    if (toolMode == TOOL_TIMER && tmRunning) { tmLeftMs = tmEndMs - now; tmRunning = false; toolFull = true; }
+  } else if (c == "timer_resume") {
+    if (toolMode == TOOL_TIMER && !tmRunning && !tmDone) { tmEndMs = now + tmLeftMs; tmRunning = true; toolFull = true; }
+  } else if (c == "sw_start") {
+    if (toolMode != TOOL_SW) { swAccum = 0; swRunning = false; swLapN = 0; swLapTotal = 0; swLastLap = 0; }
+    if (!swRunning) { swStartMs = now; swRunning = true; }
+    startTool(TOOL_SW);
+  } else if (c == "sw_stop") {
+    if (swRunning) { swAccum += now - swStartMs; swRunning = false; }
+  } else if (c == "sw_lap") {
+    if (toolMode == TOOL_SW) {
+      uint32_t el = swAccum + (swRunning ? now - swStartMs : 0);
+      swLaps[2] = swLaps[1]; swLaps[1] = swLaps[0]; swLaps[0] = el - swLastLap; swLastLap = el;
+      if (swLapN < 3) swLapN++;
+      swLapTotal++;
+    }
+  } else if (c == "sw_reset") {
+    swAccum = 0; swRunning = false; swLapN = 0; swLapTotal = 0; swLastLap = 0;
+    if (toolMode == TOOL_SW) toolFull = true;
+  } else if (c == "close") {
+    closeTool();
+  } else { server.send(400, "application/json", "{\"error\":\"Unknown command\"}"); return; }
   sendOk();
 }
 
@@ -1394,6 +1633,7 @@ void setup() {
   server.on("/api/config", HTTP_POST, handleConfigPost);
   server.on("/api/page", HTTP_POST, handlePage);
   server.on("/api/gifnext", HTTP_POST, handleGifNext);
+  server.on("/api/tool", HTTP_POST, handleTool);
   server.on("/api/gifs", HTTP_GET, handleGifList);
   server.on("/api/gif", HTTP_POST, handleUploadDone, handleUpload);
   server.on("/api/gif", HTTP_DELETE, handleGifDelete);
@@ -1416,12 +1656,14 @@ void loop() {
   uint32_t now = millis();
   if (!healthyMarked && now > HEALTHY_MS) { markHealthy(); healthyMarked = true; }
   mqttLoop(now);
+  if (toolMode) { renderTool(now); delay(5); yield(); return; }     // timer / stopwatch own the display while active
   if (now >= nextWeather && page != PAGE_GIF) fetchWeather();
 
   switch (page) {
     case PAGE_CLOCK:   renderClock(); break;
     case PAGE_WEATHER: renderWeather(); break;
     case PAGE_STATS:   renderStats(); break;
+    case PAGE_CAL:     renderCalendar(); break;
     case PAGE_GIF:     gifTick(); break;
   }
 
