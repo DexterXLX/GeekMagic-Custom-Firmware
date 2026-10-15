@@ -7,7 +7,8 @@
 
 A custom modern firmware specifically designed and tested for the **GeekMagic Small TV** (and Ultra variants) desktop gadgets featuring an ESP8266 processor and a 240x240 ST7789 display.
 
-![UI Preview](ui-preview.png)
+![UI Preview](ui-preview.png) 
+
 ---
 
 ## ✨ Features
@@ -15,31 +16,46 @@ A custom modern firmware specifically designed and tested for the **GeekMagic Sm
 ### 🎨 The Look (Web UI & Display)
 - **Flicker-Free Rendering:** Everything is painted once, and only changed parts are repainted. No flicker or lag.
 - **Custom Typography & Icons:** Uses real fonts (Outfit Bold for numbers/labels, Poppins Medium for text) and flat icons (stored compressed to save space).
-- **6 Clock Styles:** Classic, Accent (custom color), Cards, Stacked (hours over minutes), Day Progress (bar), and Glance (weather strip on top). Classic, Accent, and Cards support info blocks (temperature, humidity, wind, or today's high).
-- **4 Weather Styles:** Forecast (now + next 3 days), Card (big temperature with pills), Tiles, and Range (high/low bar).
-- **Color Themes:** Black, Midnight, Graphite, Light, plus custom accent colors.
-- **Customization:** Optional date, seconds line, page dots, 12/24h formats. Choose between rotating pages or static display mode. No header bar.
+- **Color Customization:** Pick your **accent color** and **time color** via a color box or quick swatches. Choose from four base themes (Black, Midnight, Graphite, Light). Customizations include optional date, info blocks, seconds line, page dots, and 12/24h formats.
+
+### ⏱️ Clock & Weather Styles
+- **9 Clock Faces:** Classic, Accent, Cards, Stacked (hours over minutes), Day Progress, Glance (clock + one weather card), Week (clock + 7-day strip), Sidebar (stacked clock + date/weather panel), and Date (date as the hero). Every face intelligently keeps related info together.
+- **6 Weather Faces:** Forecast (now + 3 days), Card, Tiles (humidity, wind, high, low), Range (where "now" sits between today's high/low), Hourly (now + next 4 hours with bars), and List (big temperature + labeled rows).
+- **Smart Visuals:** The range marker and hourly bars use the exact rounded numbers printed on-screen, ensuring a completely proportional and accurate visual representation of the temperature.
+
+### 📅 Calendar 
+A dedicated month calendar page with three distinct styles: **Month Grid**, **Tiles**, and **Focus** (big day number + small month).
+- **Customization:** Choose a Monday or Sunday start, pick a custom weekend color, and dim days from neighboring months. 
+- **Header Clock:** Includes a small header clock so you never lose track of time. Today's date is always highlighted in your accent color. 
+
+### ⏳ Timer & Stopwatch
+Take over the screen when you need to focus or track time:
+- **Timer:** Start a countdown (use presets or custom mm:ss up to 99:59) with Pause/Resume and Cancel. The screen flashes for up to a minute when the timer ends.
+- **Stopwatch:** Features Start, Stop, Lap (displays the last 3 laps), and Reset. 
+
+### 🔀 Custom Playlists (Display Modes)
+Don't want to just stick to one screen? Set your Display Mode to **Custom Playlist**:
+- Build a custom rotation of up to 10 items.
+- Assign specific screens (Clock, Weather, Status, GIF), pick a specific face for that screen, and set a custom duration in seconds.
+- *Example: Weather Hourly (5s) ➔ Weather Range (5s) ➔ Clock Glance (2s) ➔ Weather Forecast (10s).*
 
 ### 🎬 GIF Support
-- **Upload & Play:** Upload as many GIFs as memory allows. Pick one to use, or cycle through them alphabetically.
-- **Auto-Play / Loop:** Switch to the next GIF at the end of a loop after a chosen number of seconds.
+- **Upload & Play:** Upload as many GIFs as memory allows. Pick one to use, or auto-play all GIFs in turn, switching at the end of a loop based on your timing settings.
 - **Smart Looping:** Loops keep the GIF's original pacing. The first frame is drawn in one streamed pass for minimal pause at the loop point.
-- **Smart Home Integration:** Publish to `<topic>/gif/next` via Home Assistant / MQTT to skip to the next GIF.
+- **Smart Home Integration:** Publish to `<topic>/gif/next` via Home Assistant / MQTT to dynamically skip to the next GIF.
 
 ---
 
 ## 🚀 Installation (WiFi Only, OTA)
 
 ### Why Two Files?
-The original firmware's updater only has room for a new firmware of about **524 KB**. Because of this, updating requires a two-step process:
+The original firmware's updater only has room for a new firmware of about **524 KB**. To ensure strict memory safety (avoiding the `"ERROR[4] Not Enough Space"` bug), updating is a two-step process:
 1. **`SmallTV-Installer.bin`** (small) is flashed first via the original update page.
 2. **`SmallTV-Modern.bin`** (full) is flashed through the new installer's page, which has more room.
 
-*Note: The build process includes strict memory safety checks. It verifies the size of each file against the exact OTA partition limits and will fail the build with a clear message rather than producing a file that would not fit.*
-
 ### Step-by-Step Guide
 
-1. **Get the files:** Download the latest binaries artifact from the **Actions** tab on GitHub, or build it locally using `pio run`.
+1. **Get the files:** Download the latest binaries (`SmallTV-bins`) from the **Actions** tab on GitHub, or build it locally using `pio run`.
 2. **Flash the Installer:** Open `http://<device-ip>/update` on your current original firmware. Under *Firmware* (not FileSystem), select **`SmallTV-Installer.bin`** and press Update. Wait ~1 minute. Do not unplug. (The screen going blank or white is normal).
 3. **Connect to the Installer:** The installer tries to borrow your existing WiFi credentials. Look for `smalltv-installer` on your network. If it fails, it will broadcast an AP named `SmallTV-Installer-XXXXXX`. Connect to it, go to `192.168.4.1`, and enter your WiFi details.
 4. **Flash the Custom Modern Firmware:** Open the installer's IP address, click **Open the upload page**, select **`SmallTV-Modern.bin`** under *Firmware*, and press Update.
