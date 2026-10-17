@@ -97,7 +97,8 @@ dt{color:var(--dim)}dd{margin:0;text-align:right;font-variant-numeric:tabular-nu
 
   <nav role="tablist" id="tabs">
     <button role="tab" data-t="display" aria-selected="true">Display</button>
-    <button role="tab" data-t="place" aria-selected="false">Weather and time</button>
+    <button role="tab" data-t="faces" aria-selected="false">Faces</button>
+    <button role="tab" data-t="place" aria-selected="false">Location</button>
     <button role="tab" data-t="mqtt" aria-selected="false">Home Assistant</button>
     <button role="tab" data-t="gifs" aria-selected="false">GIFs</button>
     <button role="tab" data-t="tools" aria-selected="false">Timer</button>
@@ -117,6 +118,77 @@ dt{color:var(--dim)}dd{margin:0;text-align:right;font-variant-numeric:tabular-nu
           <option value="6">Calendar only</option>
         </select></label>
     </fieldset>
+    <fieldset><legend>Playlists</legend>
+      <p class="dim" style="margin:8px 0">Build up to four playlists and switch between them. Each item shows for its own time. A playlist plays when Display mode is "Custom playlist".</p>
+      <div class="chips" id="pltabs"></div>
+      <label><span>Playlist name</span><input type="text" id="plname" maxlength="11"></label>
+      <div id="plist"></div>
+      <div class="row">
+        <button class="btn" id="padd" type="button">Add item</button>
+        <button class="btn primary" id="pplay" type="button">Save and play this playlist</button>
+      </div>
+      <p class="dim" id="plnote"></p>
+    </fieldset>
+    <fieldset><legend>Pages when rotating</legend>
+      <div class="checks" id="bits">
+        <label><input type="checkbox" data-bit="1"> Clock</label>
+        <label><input type="checkbox" data-bit="2"> Weather</label>
+        <label><input type="checkbox" data-bit="4"> Status</label>
+        <label><input type="checkbox" data-bit="8"> GIF</label>
+        <label><input type="checkbox" data-bit="16"> Calendar</label>
+      </div>
+      <label><span>Seconds per page</span><input type="number" min="3" max="600" data-k="rotateSec" data-num></label>
+    </fieldset>
+    <fieldset><legend>Screen</legend>
+      <label><span>Brightness</span><input type="range" min="0" max="100" data-k="brightness" data-num></label>
+      <label><span>Flip upside down<small>Use if the stand puts the screen upside down</small></span><input type="checkbox" data-k="flip"></label>
+      <label><span>24-hour clock</span><input type="checkbox" data-k="h24"></label>
+      <label><span>Page dots when rotating</span><input type="checkbox" data-k="pageDots"></label>
+    </fieldset>
+    <fieldset><legend>Night dimming</legend>
+      <label><span>Dim at night</span><input type="checkbox" data-k="nightEnabled"></label>
+      <label><span>From hour (0–23)</span><input type="number" min="0" max="23" data-k="nightStart" data-num></label>
+      <label><span>Until hour (0–23)</span><input type="number" min="0" max="23" data-k="nightEnd" data-num></label>
+      <label><span>Night brightness</span><input type="range" min="0" max="100" data-k="nightBright" data-num></label>
+    </fieldset>
+  </section>
+
+  <section id="faces">
+    <fieldset><legend>Colors</legend>
+      <label><span>Color theme</span>
+        <select data-k="theme" data-num>
+          <option value="0">Black</option><option value="1">Midnight</option>
+          <option value="2">Graphite</option><option value="3">Light</option>
+        </select></label>
+      <label><span>Accent color<small>Highlights, bars, and the Accent clock</small></span><input type="color" data-k="accent"></label>
+      <div class="sw" data-for="accent"></div>
+      <label><span>Time color<small>White follows the theme</small></span><input type="color" data-k="timeColor"></label>
+      <div class="sw" data-for="timeColor"></div>
+    </fieldset>
+    <fieldset><legend>Clock</legend>
+      <label><span>Clock style<small>Stacked, Day progress, Glance, Week, Sidebar and Date have their own layouts</small></span>
+        <select data-k="clockStyle" data-num>
+          <option value="0">Classic</option><option value="1">Accent color</option><option value="2">Cards</option>
+          <option value="3">Stacked</option><option value="4">Day progress</option><option value="5">Glance</option>
+          <option value="6">Week</option><option value="7">Sidebar</option><option value="8">Date</option>
+        </select></label>
+      <label><span>Show date</span><input type="checkbox" data-k="showDate"></label>
+      <label><span>Show info under the clock<small>Outside temperature and one more value</small></span><input type="checkbox" data-k="showInfo"></label>
+      <label><span>Second info value</span>
+        <select data-k="infoRight" data-num>
+          <option value="0">Humidity</option><option value="1">Wind</option><option value="2">High today</option>
+        </select></label>
+      <label><span>Seconds line at the top</span><input type="checkbox" data-k="showSeconds"></label>
+    </fieldset>
+    <fieldset><legend>Weather</legend>
+      <label><span>Weather style<small>Forecast: three days. Hourly: next hours. Tiles, Range and List: details for today</small></span>
+        <select data-k="weatherStyle" data-num>
+          <option value="0">Forecast</option><option value="1">Card</option>
+          <option value="2">Tiles</option><option value="3">Range</option>
+          <option value="4">Hourly</option><option value="5">List</option>
+        </select></label>
+      <p class="dim" style="margin:8px 0">Units (°C / °F) and your location are in the Location tab.</p>
+    </fieldset>
     <fieldset><legend>Calendar</legend>
       <label><span>Calendar style<small>Month grid, Tiles, or Focus (big day + small month)</small></span>
         <select data-k="calStyle" data-num>
@@ -129,63 +201,6 @@ dt{color:var(--dim)}dd{margin:0;text-align:right;font-variant-numeric:tabular-nu
       <label><span>Show days of the neighbouring months<small>Dimmed</small></span><input type="checkbox" data-k="calOther"></label>
       <label><span>Clock in the calendar header</span><input type="checkbox" data-k="calClock"></label>
       <p class="dim" style="margin:8px 0">Show it with the Calendar button above, the Calendar checkbox in Pages, "Calendar only", or as a playlist item. Today uses your accent color.</p>
-    </fieldset>
-    <fieldset><legend>Playlist</legend>
-      <p class="dim" style="margin:8px 0">Used when Display mode is "Custom playlist". Each item shows for its own time. Use the same page twice with different faces to alternate between them.</p>
-      <div id="plist"></div>
-      <div class="row"><button class="btn" id="padd" type="button">Add item</button></div>
-    </fieldset>
-    <fieldset><legend>Style</legend>
-      <label><span>Color theme</span>
-        <select data-k="theme" data-num>
-          <option value="0">Black</option><option value="1">Midnight</option>
-          <option value="2">Graphite</option><option value="3">Light</option>
-        </select></label>
-      <label><span>Accent color<small>Highlights, bars, and the Accent clock</small></span><input type="color" data-k="accent"></label>
-      <div class="sw" data-for="accent"></div>
-      <label><span>Time color<small>White follows the theme</small></span><input type="color" data-k="timeColor"></label>
-      <div class="sw" data-for="timeColor"></div>
-      <label><span>Clock style<small>Stacked, Day progress, Glance, Week, Sidebar and Date have their own layouts</small></span>
-        <select data-k="clockStyle" data-num>
-          <option value="0">Classic</option><option value="1">Accent color</option><option value="2">Cards</option>
-          <option value="3">Stacked</option><option value="4">Day progress</option><option value="5">Glance</option>
-          <option value="6">Week</option><option value="7">Sidebar</option><option value="8">Date</option>
-        </select></label>
-      <label><span>Weather style<small>Forecast: three days. Hourly: next hours. Tiles, Range and List: details for today</small></span>
-        <select data-k="weatherStyle" data-num>
-          <option value="0">Forecast</option><option value="1">Card</option>
-          <option value="2">Tiles</option><option value="3">Range</option>
-          <option value="4">Hourly</option><option value="5">List</option>
-        </select></label>
-      <label><span>Show date</span><input type="checkbox" data-k="showDate"></label>
-      <label><span>Show info under the clock<small>Outside temperature and one more value</small></span><input type="checkbox" data-k="showInfo"></label>
-      <label><span>Second info value</span>
-        <select data-k="infoRight" data-num>
-          <option value="0">Humidity</option><option value="1">Wind</option><option value="2">High today</option>
-        </select></label>
-      <label><span>Seconds line at the top</span><input type="checkbox" data-k="showSeconds"></label>
-      <label><span>Page dots when rotating</span><input type="checkbox" data-k="pageDots"></label>
-    </fieldset>
-    <fieldset><legend>Screen</legend>
-      <label><span>Brightness</span><input type="range" min="0" max="100" data-k="brightness" data-num></label>
-      <label><span>Flip upside down<small>Use if the stand puts the screen upside down</small></span><input type="checkbox" data-k="flip"></label>
-      <label><span>24-hour clock</span><input type="checkbox" data-k="h24"></label>
-    </fieldset>
-    <fieldset><legend>Pages when rotating</legend>
-      <div class="checks" id="bits">
-        <label><input type="checkbox" data-bit="1"> Clock</label>
-        <label><input type="checkbox" data-bit="2"> Weather</label>
-        <label><input type="checkbox" data-bit="4"> Status</label>
-        <label><input type="checkbox" data-bit="8"> GIF</label>
-        <label><input type="checkbox" data-bit="16"> Calendar</label>
-      </div>
-      <label><span>Seconds per page</span><input type="number" min="3" max="600" data-k="rotateSec" data-num></label>
-    </fieldset>
-    <fieldset><legend>Night dimming</legend>
-      <label><span>Dim at night</span><input type="checkbox" data-k="nightEnabled"></label>
-      <label><span>From hour (0–23)</span><input type="number" min="0" max="23" data-k="nightStart" data-num></label>
-      <label><span>Until hour (0–23)</span><input type="number" min="0" max="23" data-k="nightEnd" data-num></label>
-      <label><span>Night brightness</span><input type="range" min="0" max="100" data-k="nightBright" data-num></label>
     </fieldset>
   </section>
 
@@ -310,26 +325,37 @@ $('#theme').onclick=()=>{const d=matchMedia('(prefers-color-scheme:dark)').match
 /* tabs */
 $$('#tabs button').forEach(b=>b.onclick=()=>{$$('#tabs button').forEach(x=>x.setAttribute('aria-selected',x===b));$$('main section').forEach(s=>s.classList.toggle('on',s.id===b.dataset.t));if(b.dataset.t==='gifs')loadGifs()});
 
-/* playlist */
+/* playlists */
 const PGN=['Clock','Weather','Status','GIF','Calendar'];
 const FACES=[['Classic','Accent','Cards','Stacked','Day progress','Glance','Week','Sidebar','Date'],['Forecast','Card','Tiles','Range','Hourly','List'],[],[],['Month','Tiles','Focus']];
-let plist=[];
+let pls=[],plSel=0,plAct=0;
 const opts=(a,sel)=>a.map((n,i)=>`<option value="${i}"${i===sel?' selected':''}>${n}</option>`).join('');
+function initPls(){
+  pls=[0,1,2,3].map(i=>{const q=(cfg.pl||[])[i]||{};return{n:q.n||('Playlist '+(i+1)),l:(q.l||[]).map(x=>({p:x.p,s:x.s,t:x.t}))}});
+  plAct=cfg.plActive||0;if(plSel>3)plSel=0;renderTabs(true);renderList();
+}
+function renderTabs(setName){
+  const b=$('#pltabs');b.innerHTML='';
+  pls.forEach((p,i)=>{const x=document.createElement('button');x.type='button';x.className='chip';x.setAttribute('aria-pressed',i===plSel);x.textContent=(i===plAct?'\u25B6 ':'')+p.n;x.onclick=()=>{plSel=i;renderTabs(true);renderList()};b.appendChild(x)});
+  if(setName)$('#plname').value=pls[plSel].n;
+  $('#plnote').textContent=(plAct===plSel?'This playlist is the one that plays.':'The one that plays now is "'+pls[plAct].n+'".')+' ('+pls[plSel].l.length+' of 10 items)';
+}
+$('#plname').oninput=e=>{pls[plSel].n=e.target.value.slice(0,11)||('Playlist '+(plSel+1));dirty=true;renderTabs(false)};
 function renderList(){
-  const box=$('#plist');box.innerHTML='';
-  if(!plist.length){box.innerHTML='<p class="dim">No items yet. Press Add item.</p>';return}
-  plist.forEach((it,i)=>{
+  const box=$('#plist'),L=pls[plSel].l;box.innerHTML='';
+  if(!L.length){box.innerHTML='<p class="dim">No items yet. Press Add item.</p>';return}
+  L.forEach((it,i)=>{
     const d=document.createElement('div');d.className='pl';
     const fc=FACES[it.p]||[];
     d.innerHTML=`<span class="n">${i+1}</span><select class="lp" aria-label="Page">${opts(PGN,it.p)}</select>${fc.length?`<select class="ls" aria-label="Face">${opts(fc,it.s)}</select>`:''}<input class="lt" type="number" min="1" max="600" value="${it.t}" aria-label="Seconds"><span class="dim">sec</span><button class="btn" type="button" data-a="up" aria-label="Move up">&#9650;</button><button class="btn" type="button" data-a="dn" aria-label="Move down">&#9660;</button><button class="btn" type="button" data-a="rm" aria-label="Remove">&#10005;</button>`;
     d.querySelector('.lp').onchange=e=>{it.p=+e.target.value;it.s=0;dirty=true;renderList()};
     const ls=d.querySelector('.ls');if(ls)ls.onchange=e=>{it.s=+e.target.value;dirty=true};
     d.querySelector('.lt').oninput=e=>{it.t=Math.max(1,Math.min(600,+e.target.value||1));dirty=true};
-    d.querySelectorAll('button').forEach(b=>b.onclick=()=>{const a=b.dataset.a;dirty=true;if(a==='rm')plist.splice(i,1);else if(a==='up'&&i>0)[plist[i-1],plist[i]]=[plist[i],plist[i-1]];else if(a==='dn'&&i<plist.length-1)[plist[i+1],plist[i]]=[plist[i],plist[i+1]];renderList()});
+    d.querySelectorAll('button').forEach(b=>b.onclick=()=>{const a=b.dataset.a;dirty=true;if(a==='rm')L.splice(i,1);else if(a==='up'&&i>0)[L[i-1],L[i]]=[L[i],L[i-1]];else if(a==='dn'&&i<L.length-1)[L[i+1],L[i]]=[L[i],L[i+1]];renderList();renderTabs(false)});
     box.appendChild(d);
   });
 }
-$('#padd').onclick=()=>{if(plist.length>=10){toast('Up to 10 items');return}plist.push({p:plist.length&&plist[plist.length-1].p===0?1:0,s:0,t:10});dirty=true;renderList()};
+$('#padd').onclick=()=>{const L=pls[plSel].l;if(L.length>=10){toast('Up to 10 items per playlist');return}L.push({p:L.length&&L[L.length-1].p===0?1:0,s:0,t:10});dirty=true;renderList();renderTabs(false)};
 
 /* color swatches */
 const PRESET=['#FF6B57','#FF9F0A','#FFD60A','#A3E635','#30D158','#2DD4BF','#64D2FF','#0A84FF','#BF5AF2','#FF375F','#FFFFFF'];
@@ -345,18 +371,21 @@ function fill(){
   const o=[...$('#tzpreset').options].find(x=>x.value===cfg.tz);$('#tzpreset').value=o?o.value:'';
   setAccent(cfg.accent||'#2DD4BF');$('#pt').textContent=(cfg.mqttTopic||'smalltv')+'/page/set';
 }
-async function loadCfg(){cfg=await api('/api/config');fill();plist=(cfg.list||[]).map(x=>({p:x.p,s:x.s,t:x.t}));renderList()}
+async function loadCfg(){cfg=await api('/api/config');fill();initPls()}
 $('#tzpreset').onchange=e=>{if(e.target.value)$('#tz').value=e.target.value};
 $('[data-k=accent]').oninput=e=>setAccent(e.target.value);
 $$('[data-k],[data-bit]').forEach(e=>e.addEventListener('input',()=>dirty=true));
-$('#save').onclick=async()=>{
+async function saveAll(over){
   const body={};
   $$('[data-k]').forEach(e=>{const k=e.dataset.k;body[k]=e.type==='checkbox'?e.checked:(e.hasAttribute('data-num')?Number(e.value):e.value)});
-  if(body.mode===5&&!plist.length){toast('Add at least one playlist item first');return}
-  body.list=plist;
   body.pages=$$('[data-bit]').reduce((a,e)=>a|(e.checked?+e.dataset.bit:0),0)||1;
+  body.pl=pls;body.plActive=plAct;
+  Object.assign(body,over||{});
+  if(body.mode===5&&!pls[body.plActive].l.length){toast('Add at least one item to the playlist first');return}
   try{const r=await api('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});dirty=false;toast(r.saved===false?'Applied, but not saved: storage unavailable':'Saved');await loadCfg()}catch(e){toast(e.message)}
-};
+}
+$('#save').onclick=()=>saveAll();
+$('#pplay').onclick=()=>{plAct=plSel;saveAll({mode:5,plActive:plSel})};
 
 /* live status + preview */
 function preview(){
@@ -367,7 +396,7 @@ function preview(){
   else if(p===4)h=`<div class="mid">Calendar</div><div class="sm">${st.date||''}</div>`;
   else h=`<div class="mid">GIF</div><div class="sm">${cfg.gif||'none selected'}</div>`;
   s.innerHTML=h;
-  $$('.chip').forEach(c=>c.setAttribute('aria-pressed',+c.dataset.p===p));
+  $$('#chips .chip').forEach(c=>c.setAttribute('aria-pressed',+c.dataset.p===p));
 }
 function up(s){const d=Math.floor(s/86400),h=Math.floor(s/3600)%24,m=Math.floor(s/60)%60;return`${d}d ${h}h ${m}m`}
 async function poll(){
@@ -380,7 +409,7 @@ async function poll(){
     $('#stats').innerHTML=[['Address',st.ip],['Signal',st.rssi+' dBm'],['Free memory',Math.round(st.heap/1024)+' KB'],['Uptime',up(st.uptime)],['MQTT',st.mqtt],['Storage',Math.round(st.fsUsed/1024)+' of '+Math.round(st.fsTotal/1024)+' KB'],['Firmware','v'+st.version]].map(r=>`<dt>${r[0]}</dt><dd>${r[1]}</dd>`).join('');
   }catch(e){$('#sub').textContent='Device not responding'}
 }
-$$('.chip').forEach(c=>c.onclick=async()=>{try{await api('/api/page?n='+c.dataset.p,{method:'POST'});if(cfg.mode!==0)await loadCfg();poll()}catch(e){toast(e.message)}});
+$$('#chips .chip').forEach(c=>c.onclick=async()=>{try{await api('/api/page?n='+c.dataset.p,{method:'POST'});if(cfg.mode!==0)await loadCfg();poll()}catch(e){toast(e.message)}});
 
 /* gifs */
 async function loadGifs(){

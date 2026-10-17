@@ -18,6 +18,9 @@
 #include "fonts.h"
 #include "icons.h"
 
+// Width of the area cleared behind a time. The widest time ("00:00") is 222 px, so anything narrower must not leave old digits behind.
+#define TIME_PAD 234
+#define TIME_PAD_CARD 226     // inside the 228 px wide card
 #define C565(r, g, b) ((uint16_t)((((r) & 0xF8) << 8) | (((g) & 0xFC) << 3) | ((b) >> 3)))
 
 // ------------------------------------------------------------------ globals
@@ -65,7 +68,7 @@ uint16_t swLapTotal = 0;
 void closeTool();
 
 // mqtt
-char tStatus[64], tState[64], tBrt[64], tBrtSet[64], tPageSet[64], tGifNext[64];
+char tStatus[64], tState[64], tBrt[64], tBrtSet[64], tPageSet[64], tGifNext[64], tPlSet[64];
 uint32_t mqttNext = 0, mqttPub = 0;
 
 void setPage(uint8_t p);
@@ -153,18 +156,25 @@ bool pageUsable(uint8_t p) {
 }
 uint8_t usableCount() { uint8_t n = 0; for (uint8_t p = 0; p < PAGE_COUNT; p++) n += pageUsable(p); return n; }
 bool rotating() { return cfg.mode == 0 && usableCount() > 1; }
-bool playlistActive() { return cfg.mode == 5 && cfg.listN > 0; }
+#define PL cfg.list[cfg.plActive]            // the playlist that is playing
+#define PLN cfg.listN[cfg.plActive]
+bool playlistActive() { return cfg.mode == 5 && PLN > 0; }
 static void applyFaces() { vClock = cfg.clockStyle; vWeather = cfg.weatherStyle; vCal = cfg.calStyle; }
 static int pinnedPage() { return (cfg.mode >= 1 && cfg.mode <= 4) ? cfg.mode - 1 : (cfg.mode == 6 ? PAGE_CAL : -1); }
-static bool slotUsable(int i) { return cfg.list[i].page < PAGE_COUNT && (cfg.list[i].page != PAGE_GIF || gifOk); }
+static bool slotUsable(int i) { return PL[i].page < PAGE_COUNT && (PL[i].page != PAGE_GIF || gifOk); }
 static void enterSlot(int i) {                          // show one playlist item: its page and its face
   curSlot = i;
   applyFaces();
-  const Slot& sl = cfg.list[i];
+  const Slot& sl = PL[i];
   if (sl.page == PAGE_CLOCK) vClock = sl.style;
   if (sl.page == PAGE_WEATHER) vWeather = sl.style;
   if (sl.page == PAGE_CAL) vCal = sl.style;
   setPage(sl.page);
+}
+static void startPlaylist() {                           // begin the active playlist at its first usable item
+  int first = 0;
+  for (int i = 0; i < PLN; i++) if (slotUsable(i)) { first = i; break; }
+  enterSlot(first);
 }
 uint8_t nextPageFrom(uint8_t cur) {
   for (uint8_t i = 1; i <= PAGE_COUNT; i++) { uint8_t p = (cur + i) % PAGE_COUNT; if (pageUsable(p)) return p; }
@@ -418,7 +428,7 @@ static void drawDots() {                                // optional indicator: o
   if (!cfg.pageDots) return;
   bool list = playlistActive();
   if (!list && !rotating()) return;
-  int n = list ? cfg.listN : usableCount();
+  int n = list ? PLN : usableCount();
   if (n < 2) return;
   int x = 120 - (n - 1) * 6;
   if (list) {
@@ -540,7 +550,7 @@ static void renderClockExtra(uint8_t st, const struct tm& t, bool full) {
   }
   if (st == 4) {                                              // day progress: clock block, then one progress group
     if (newMin) {
-      drawText(F_TIME, tb, 120, 98, AL_C, cTime, cBg, 212);
+      drawText(F_TIME, tb, 120, 98, AL_C, cTime, cBg, TIME_PAD);
       if (cfg.showDate) drawText(F_TXT, db, 120, 140, AL_C, cDim, cBg, 190);
       if (!cfg.h24) drawText(F_CAP, ampm, 224, 140, AL_R, cDim, cBg);
       float frac = (t.tm_hour * 60 + t.tm_min) / 1440.0f;
@@ -555,7 +565,7 @@ static void renderClockExtra(uint8_t st, const struct tm& t, bool full) {
   }
   if (st == 5) {                                              // glance: clock on top, ONE weather card below with everything in it
     if (newMin) {
-      drawText(F_TIME, tb, 120, 88, AL_C, cTime, cBg, 212);
+      drawText(F_TIME, tb, 120, 88, AL_C, cTime, cBg, TIME_PAD);
       if (cfg.showDate) drawText(F_TXT, db, 120, 128, AL_C, cDim, cBg, 190);
       if (!cfg.h24) drawText(F_CAP, ampm, 224, 128, AL_R, cDim, cBg);
     }
@@ -576,7 +586,7 @@ static void renderClockExtra(uint8_t st, const struct tm& t, bool full) {
   }
   if (st == 6) {                                              // week: clock, weekday, then a seven-day strip
     if (newMin) {
-      drawText(F_TIME, tb, 120, 86, AL_C, cTime, cBg, 212);
+      drawText(F_TIME, tb, 120, 86, AL_C, cTime, cBg, TIME_PAD);
       if (cfg.showDate) drawText(F_TXT, WDF[t.tm_wday], 120, 126, AL_C, cDim, cBg, 190);
       if (!cfg.h24) drawText(F_CAP, ampm, 224, 126, AL_R, cDim, cBg);
     }
@@ -667,7 +677,7 @@ void renderClock() {
     char tb[8]; int h = t.tm_hour;
     if (!cfg.h24) { h %= 12; if (!h) h = 12; }
     snprintf(tb, sizeof tb, cfg.h24 ? "%02d:%02d" : "%d:%02d", h, t.tm_min);
-    drawText(F_TIME, tb, 120, tBase, AL_C, st == 1 ? cAccent : cTime, panel, 212);
+    drawText(F_TIME, tb, 120, tBase, AL_C, st == 1 ? cAccent : cTime, panel, cards ? TIME_PAD_CARD : TIME_PAD);
     if (cfg.showDate) {
       char db[24]; snprintf(db, sizeof db, "%s, %s %d", WD[t.tm_wday], MO[t.tm_mon], t.tm_mday);
       drawText(F_TXT, db, 120, dBase, AL_C, st == 1 ? blendPct(cAccent, cBg, 80) : cDim, panel, 190);
@@ -927,7 +937,7 @@ static void drawCalendar(const struct tm& t) {
         drawText(nf, nb, cx, base, AL_C, today ? onAcc : fg, tile, 0, &s);
       } else drawText(nf, nb, cx, base, AL_C, fg, cBg);
     } else if (today) {                                              // month / focus: round highlight
-      int rr = (st == 2) ? 10 : 13, cy = base - ((st == 2) ? 5 : 7);
+      int rr = (st == 2) ? 12 : 15, cy = base - ((st == 2) ? 5 : 7);
       Shp s = {cx - rr, cy - rr, 2 * rr, 2 * rr, rr, cAccent, cBg};
       drawRRect(s.x, s.y, s.w, s.h, s.r, cAccent, cBg);
       drawText(nf, nb, cx, base, AL_C, onAcc, cAccent, 0, &s);
@@ -985,7 +995,7 @@ void renderTool(uint32_t now) {
     if (sec != lastShown) {
       lastShown = sec;
       toolTime(tb, sizeof tb, sec);
-      drawText(F_TIME, tb, 120, 128, AL_C, cTime, cBg, 212);
+      drawText(F_TIME, tb, 120, 128, AL_C, cTime, cBg, TIME_PAD);
       float frac = tmTotalMs ? (float)leftMs / tmTotalMs : 0;
       int fw = max(12, (int)(192 * frac));
       drawRRect(24, 152, 192, 12, 6, cTrack, cBg);
@@ -1001,7 +1011,7 @@ void renderTool(uint32_t now) {
     lastShown = sec;
     toolTime(tb, sizeof tb, sec);
     if (sec >= 6000) drawText(F_VAL, tb, 120, 112, AL_C, cTime, cBg, 212);
-    else drawText(F_TIME, tb, 120, 112, AL_C, cTime, cBg, 212);
+    else drawText(F_TIME, tb, 120, 112, AL_C, cTime, cBg, TIME_PAD);
   }
   if (tenth != lastTenth) { lastTenth = tenth; snprintf(tb, sizeof tb, ".%d", tenth); drawText(F_VAL, tb, 224, 152, AL_R, cAccent, cBg, 56); }
   int sig = swLapN * 4 + (swRunning ? 1 : 0) + swLapTotal * 16;
@@ -1218,11 +1228,10 @@ void applyConfig() {
   snprintf(tBrtSet, sizeof tBrtSet, "%s/brightness/set", cfg.mqttTopic);
   snprintf(tPageSet, sizeof tPageSet, "%s/page/set", cfg.mqttTopic);
   snprintf(tGifNext, sizeof tGifNext, "%s/gif/next", cfg.mqttTopic);
+  snprintf(tPlSet, sizeof tPlSet, "%s/playlist/set", cfg.mqttTopic);
   applyFaces();
   if (playlistActive()) {                               // custom playlist: start at its first usable item
-    int first = 0;
-    for (int i = 0; i < cfg.listN; i++) if (slotUsable(i)) { first = i; break; }
-    enterSlot(first);
+    startPlaylist();
   } else if (pinnedPage() >= 0) {                       // one page pinned
     uint8_t t = pinnedPage();
     if (t == PAGE_GIF && !gifOk) t = PAGE_CLOCK;
@@ -1278,6 +1287,7 @@ void mqttCb(char* topic, byte* pl, unsigned len) {
   int v = atoi(b);
   if (!strcmp(topic, tBrtSet)) { cfg.brightness = constrain(v, 0, 100); applyBrightness(); publishState(); }
   else if (!strcmp(topic, tPageSet) && pageUsable(v)) { applyFaces(); setPage(v); }
+  else if (!strcmp(topic, tPlSet) && v >= 1 && v <= MAX_PL) { cfg.plActive = v - 1; cfg.mode = 5; if (PLN > 0) startPlaylist(); }   // Home Assistant: play playlist 1..4
   else if (!strcmp(topic, tGifNext)) { if (gifAdvance(false) && page != PAGE_GIF) setPage(PAGE_GIF); }
 }
 
@@ -1302,6 +1312,7 @@ void mqttLoop(uint32_t now) {
   mqtt.subscribe(tBrtSet);
   mqtt.subscribe(tPageSet);
   mqtt.subscribe(tGifNext);
+  mqtt.subscribe(tPlSet);
   if (cfg.haDiscovery) {
     discover("sensor", "temp", "Outdoor temperature", "temperature", cfg.fahrenheit ? "\xC2\xB0" "F" : "\xC2\xB0" "C", "{{ value_json.temp }}");
     discover("sensor", "rssi", "WiFi signal", "signal_strength", "dBm", "{{ value_json.rssi }}");
@@ -1668,10 +1679,10 @@ void loop() {
   }
 
   if (playlistActive()) {                               // custom playlist: each item has its own time
-    if (curSlot >= cfg.listN) curSlot = 0;
-    if (cfg.listN > 1 && now - pageSince > (uint32_t)cfg.list[curSlot].secs * 1000UL) {
+    if (curSlot >= PLN) curSlot = 0;
+    if (PLN > 1 && now - pageSince > (uint32_t)PL[curSlot].secs * 1000UL) {
       int nx = curSlot;
-      for (int k = 1; k < cfg.listN; k++) { int i = (curSlot + k) % cfg.listN; if (slotUsable(i)) { nx = i; break; } }
+      for (int k = 1; k < PLN; k++) { int i = (curSlot + k) % PLN; if (slotUsable(i)) { nx = i; break; } }
       if (nx != curSlot) enterSlot(nx); else pageSince = now;
     }
   } else if (rotating() && now - pageSince > (uint32_t)cfg.rotateSec * 1000UL) setPage(nextPageFrom(page));

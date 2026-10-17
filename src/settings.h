@@ -6,7 +6,7 @@
 // ---- Hardware (verify against your board!) ----
 #define BL_PIN        5      // backlight, PWM
 #define BL_ACTIVE_LOW 1      // 1 = LOW turns the backlight on
-#define FW_VERSION    "1.8.0"
+#define FW_VERSION    "1.9.0"
 #define CONFIG_PATH   "/smalltv_cfg.json"   // own name: never touches the stock firmware's /config.json
 #define GIF_DIR       "/image"   // same folder the stock firmware uses for GIFs
 #define GIF_DIR2      "/gif"     // also searched, in case stock GIFs live here
@@ -14,6 +14,7 @@
 #define HEALTHY_MS    180000UL    // uptime after which a boot counts as good
 
 #define MAX_SLOTS 10
+#define MAX_PL 4                        // number of playlists
 struct Slot { uint8_t page, style; uint16_t secs; };   // one playlist item: which page, which face, how long
 
 enum Page : uint8_t { PAGE_CLOCK = 0, PAGE_WEATHER = 1, PAGE_STATS = 2, PAGE_GIF = 3, PAGE_CAL = 4, PAGE_COUNT = 5 };
@@ -44,8 +45,10 @@ struct Settings {
   char     mqttTopic[32] = "smalltv";
   bool     haDiscovery   = true;
   uint8_t  mode          = 0;               // 0 = rotate pages, 1..4 = keep one page (clock, weather, status, GIF), 5 = custom playlist, 6 = calendar only
-  Slot     list[MAX_SLOTS];                   // custom playlist
-  uint8_t  listN         = 0;
+  Slot     list[MAX_PL][MAX_SLOTS];           // custom playlists
+  uint8_t  listN[MAX_PL] = {0, 0, 0, 0};
+  char     plName[MAX_PL][12] = {"Playlist 1", "Playlist 2", "Playlist 3", "Playlist 4"};
+  uint8_t  plActive      = 0;                 // which playlist plays in "Custom playlist" mode
   uint8_t  clockStyle    = 0;               // 0 classic, 1 accent, 2 cards, 3 stacked, 4 day progress, 5 glance, 6 week, 7 sidebar, 8 date
   uint8_t  weatherStyle  = 0;               // 0 forecast, 1 card, 2 tiles, 3 range, 4 hourly, 5 list
   uint8_t  theme         = 0;               // 0 black, 1 midnight, 2 graphite, 3 light
@@ -115,16 +118,33 @@ inline void settingsFromJson(Settings& s, JsonVariantConst v) {
   if (!v["gifAuto"].isNull())      s.gifAuto = v["gifAuto"];
   if (!v["gifSecs"].isNull())      s.gifSecs = constrain((int)v["gifSecs"], 3, 3600);
   if (!v["gifSpeed"].isNull())     s.gifSpeed = constrain((int)v["gifSpeed"], 25, 300);
-  JsonArrayConst pl = v["list"].as<JsonArrayConst>();
-  if (!pl.isNull()) {
-    s.listN = 0;
-    for (JsonVariantConst o : pl) {
-      if (s.listN >= MAX_SLOTS) break;
+  // playlists: {"pl":[{"n":"name","l":[{"p":page,"s":face,"t":seconds},...]},...],"plActive":0}
+  JsonArrayConst pls = v["pl"].as<JsonArrayConst>();
+  if (!pls.isNull()) {
+    int pi = 0;
+    for (JsonVariantConst q : pls) {
+      if (pi >= MAX_PL) break;
+      copyStr(s.plName[pi], sizeof(s.plName[pi]), q["n"]);
+      JsonArrayConst items = q["l"].as<JsonArrayConst>();
+      s.listN[pi] = 0;
+      for (JsonVariantConst o : items) {
+        if (s.listN[pi] >= MAX_SLOTS) break;
+        int p = o["p"] | 0, f = o["s"] | 0, t = o["t"] | 10;
+        Slot& sl = s.list[pi][s.listN[pi]++];
+        sl.page = constrain(p, 0, 4); sl.style = constrain(f, 0, 8); sl.secs = constrain(t, 1, 600);
+      }
+      pi++;
+    }
+  }
+  if (!v["plActive"].isNull()) s.plActive = constrain((int)v["plActive"], 0, MAX_PL - 1);
+  JsonArrayConst legacy = v["list"].as<JsonArrayConst>();      // settings saved by older versions: one playlist
+  if (!legacy.isNull() && v["pl"].isNull()) {
+    s.listN[0] = 0;
+    for (JsonVariantConst o : legacy) {
+      if (s.listN[0] >= MAX_SLOTS) break;
       int p = o["p"] | 0, f = o["s"] | 0, t = o["t"] | 10;
-      s.list[s.listN].page = constrain(p, 0, 4);
-      s.list[s.listN].style = constrain(f, 0, 8);
-      s.list[s.listN].secs = constrain(t, 1, 600);
-      s.listN++;
+      Slot& sl = s.list[0][s.listN[0]++];
+      sl.page = constrain(p, 0, 4); sl.style = constrain(f, 0, 8); sl.secs = constrain(t, 1, 600);
     }
   }
   if (s.pages == 0) s.pages = 0x01;
@@ -149,8 +169,14 @@ inline void settingsToJson(const Settings& s, JsonDocument& d, bool includeSecre
   d["calStyle"] = s.calStyle;           d["calMon"] = s.calMon;           d["calWeekend"] = s.calWeekend;
   d["weekendColor"] = s.weekendColor;   d["calOther"] = s.calOther;         d["calClock"] = s.calClock;
   d["gifAuto"] = s.gifAuto;             d["gifSecs"] = s.gifSecs;         d["gifSpeed"] = s.gifSpeed;
-  JsonArray pl = d["list"].to<JsonArray>();
-  for (int i = 0; i < s.listN; i++) { JsonObject o = pl.add<JsonObject>(); o["p"] = s.list[i].page; o["s"] = s.list[i].style; o["t"] = s.list[i].secs; }
+  JsonArray pls = d["pl"].to<JsonArray>();
+  for (int pi = 0; pi < MAX_PL; pi++) {
+    JsonObject q = pls.add<JsonObject>();
+    q["n"] = s.plName[pi];
+    JsonArray items = q["l"].to<JsonArray>();
+    for (int i = 0; i < s.listN[pi]; i++) { JsonObject o = items.add<JsonObject>(); o["p"] = s.list[pi][i].page; o["s"] = s.list[pi][i].style; o["t"] = s.list[pi][i].secs; }
+  }
+  d["plActive"] = s.plActive;
   d["mqttPass"] = includeSecrets ? s.mqttPass : "";
 }
 
