@@ -32,7 +32,7 @@ WiFiClient netClient;
 PubSubClient mqtt(netClient);
 AnimatedGIF* gif = nullptr;
 
-uint16_t cBg, cPanel, cText, cDim, cTrack, cAccent, cTime, cWeekend;
+uint16_t cBg, cPanel, cText, cDim, cTrack, cAccent, cTime, cWeekend, cPg[3];   // cPg: year / month / day colors
 char apName[24];
 
 struct Weather {
@@ -52,7 +52,7 @@ uint32_t bootCount = 0;
 uint32_t pageSince = 0, lastSlow = 0, lastBars = 0, gifNext = 0;
 int lastMin = -1, lastSec = -1, gifOffX = 0, gifOffY = 0;
 int lastDay = -1;
-uint8_t vClock = 0, vWeather = 0, vCal = 0;   // faces shown right now (from the playlist item, or from the settings)
+uint8_t vClock = 0, vWeather = 0, vCal = 0, vProg = 0, vArg = 0;   // faces shown right now (from the playlist item, or from the settings)
 int curSlot = 0;                    // current playlist item
 
 // timer + stopwatch state (they take over the display while active)
@@ -123,6 +123,7 @@ void rebuildColors() {
   cAccent = hexTo565(cfg.accent);
   cTime = (strcasecmp(cfg.timeColor, "#FFFFFF") == 0) ? cText : hexTo565(cfg.timeColor);   // white = follow the theme
   cWeekend = hexTo565(cfg.weekendColor);
+  for (int i = 0; i < 3; i++) cPg[i] = hexTo565(cfg.progC[i]);
 }
 
 bool timeValid() { return time(nullptr) > 1700000000; }
@@ -159,8 +160,8 @@ bool rotating() { return cfg.mode == 0 && usableCount() > 1; }
 #define PL cfg.list[cfg.plActive]            // the playlist that is playing
 #define PLN cfg.listN[cfg.plActive]
 bool playlistActive() { return cfg.mode == 5 && PLN > 0; }
-static void applyFaces() { vClock = cfg.clockStyle; vWeather = cfg.weatherStyle; vCal = cfg.calStyle; }
-static int pinnedPage() { return (cfg.mode >= 1 && cfg.mode <= 4) ? cfg.mode - 1 : (cfg.mode == 6 ? PAGE_CAL : -1); }
+static void applyFaces() { vClock = cfg.clockStyle; vWeather = cfg.weatherStyle; vCal = cfg.calStyle; vProg = cfg.progStyle; vArg = cfg.progArg; }
+static int pinnedPage() { return (cfg.mode >= 1 && cfg.mode <= 4) ? cfg.mode - 1 : (cfg.mode == 6 ? PAGE_CAL : (cfg.mode == 7 ? PAGE_PROG : -1)); }
 static bool slotUsable(int i) { return PL[i].page < PAGE_COUNT && (PL[i].page != PAGE_GIF || gifOk); }
 static void enterSlot(int i) {                          // show one playlist item: its page and its face
   curSlot = i;
@@ -169,6 +170,7 @@ static void enterSlot(int i) {                          // show one playlist ite
   if (sl.page == PAGE_CLOCK) vClock = sl.style;
   if (sl.page == PAGE_WEATHER) vWeather = sl.style;
   if (sl.page == PAGE_CAL) vCal = sl.style;
+  if (sl.page == PAGE_PROG) { vProg = sl.style; vArg = sl.arg; }
   setPage(sl.page);
 }
 static void startPlaylist() {                           // begin the active playlist at its first usable item
@@ -503,7 +505,7 @@ static void drawInfo(uint8_t st) {
     drawIcon(ic, icx, icy, 16, bg, ov);
     drawText(F_CAP, lab, lx, lb, AL_L, lcol, bg);
     int w = drawText(F_VAL, val, vx, vb, AL_L, vcol, bg, card ? 88 : 92);
-    if (un[0] && (!card || w + 3 + textW(F_SML, un) <= 92)) drawText(F_SML, un, vx + w + 3, vb, AL_L, ucol, bg);   // never past the box edge
+    if (un[0] && (!card || w + 3 + textW(F_SML, un) <= 94)) drawText(F_SML, un, vx + w + 3, vb, AL_L, ucol, bg);   // never past the box edge
   }
 }
 
@@ -765,7 +767,7 @@ void renderWeather() {
       drawIcon(*ti[i], x + 18, y + 15, 16, cPanel, tov[i]);
       drawText(F_CAP, tl[i], x + 30, y + 19, AL_L, cDim, cPanel);
       int w = drawText(F_VAL, val[i], x + 14, y + 54, AL_L, cText, cPanel);
-      if (w + 3 + textW(F_SML, tu[i]) <= 92) drawText(F_SML, tu[i], x + 14 + w + 3, y + 54, AL_L, cDim, cPanel);   // never past the box edge
+      if (w + 3 + textW(F_SML, tu[i]) <= 94) drawText(F_SML, tu[i], x + 14 + w + 3, y + 54, AL_L, cDim, cPanel);   // never past the box edge
     }
     return;
   }
@@ -808,6 +810,9 @@ void renderWeather() {
     for (int i = 0; i < 5; i++) hv[i] = (int)roundf(wx.htemp[i]);                // bars follow the numbers shown
     int tmin = hv[0], tmax = hv[0];
     for (int i = 1; i < 5; i++) { tmin = min(tmin, hv[i]); tmax = max(tmax, hv[i]); }
+    // one scale for every bar: at most 4 px per degree, squeezed only when the range would not fit (never exaggerated)
+    float hk = (tmax > tmin) ? min(4.0f, 32.0f / (tmax - tmin)) : 0.0f;
+    int hbase = 20 + (int)((32.0f - hk * (tmax - tmin)) / 2);                      // small ranges: bars sit in the middle
     for (int i = 0; i < 5; i++) {
       int cx = 24 + 48 * i;
       char lb[8] = "";
@@ -821,7 +826,7 @@ void renderWeather() {
       drawIcon(*wxIcon(wx.hcode[i], wx.hday[i]), cx, 118, 32, cBg);
       snprintf(tb, sizeof tb, "%d%c", hv[i], 0xB0);
       drawText(F_TXT, tb, cx, 162, AL_C, cText, cBg);
-      int bh = (tmax > tmin) ? 18 + (32 * (hv[i] - tmin)) / (tmax - tmin) : 34;       // equal temperatures = equal bars
+      int bh = hbase + (int)roundf(hk * (hv[i] - tmin));
       drawRRect(cx - 9, 228 - bh, 18, bh, 9, i == 0 ? cAccent : cTrack, cBg);
     }
     return;
@@ -1028,6 +1033,219 @@ void renderTool(uint32_t now) {
       drawText(F_TXT, tb, 216, base, AL_R, cText, cBg);
     }
   }
+}
+
+// ------------------------------------------------------------------ progress and countdowns
+// Faces: 0 watch boxes (solid), 1 watch boxes (tinted) - year, month and day in three colored boxes,
+//        2 dots (day / month / year), 3..6 countdown to a custom event (big, sentence, boxes, bar).
+// Painted once a minute, so it costs nothing in between.
+static int32_t daysFromCivil(int y, int m, int d) {            // days since 1970-01-01 (m = 1..12)
+  y -= (m <= 2);
+  int era = (y >= 0 ? y : y - 399) / 400;
+  unsigned yoe = (unsigned)(y - era * 400);
+  unsigned doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+  unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+  return era * 146097 + (int32_t)doe - 719468;
+}
+static const char* const MOUP[12] = {"JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"};
+
+struct Per { float frac; int left; int total; char label[20]; char of[24]; };
+static void periodInfo(int which, const struct tm& t, Per& p) {  // which: 0 day, 1 month, 2 year
+  int y = t.tm_year + 1900, mins = t.tm_hour * 60 + t.tm_min;
+  float dayFrac = mins / 1440.0f;
+  if (which == 0) {
+    p.frac = dayFrac; p.left = 1440 - mins; p.total = 24;
+    strcpy(p.label, "TODAY");
+    snprintf(p.of, sizeof p.of, "HOUR %d OF 24", t.tm_hour + 1);
+  } else if (which == 1) {
+    int dim = daysInMonth(y, t.tm_mon);
+    p.frac = (t.tm_mday - 1 + dayFrac) / dim; p.left = dim - t.tm_mday; p.total = dim;
+    strlcpy(p.label, MOFU[t.tm_mon], sizeof p.label);
+    snprintf(p.of, sizeof p.of, "DAY %d OF %d", t.tm_mday, dim);
+  } else {
+    int diy = ((y % 4 == 0 && y % 100 != 0) || y % 400 == 0) ? 366 : 365;
+    p.frac = (t.tm_yday + dayFrac) / diy; p.left = diy - (t.tm_yday + 1); p.total = diy;
+    snprintf(p.label, sizeof p.label, "YEAR %d", y);
+    snprintf(p.of, sizeof p.of, "DAY %d OF %d", t.tm_yday + 1, diy);
+  }
+}
+static int pctOf(float f) { int p = (int)(f * 100); return p < 0 ? 0 : (p > 100 ? 100 : p); }
+
+// One watch-style box: label + percentage on the left, what is left on the right, a progress bar at the bottom.
+static void watchBox(int y, uint16_t col, bool solid, const char* label, float frac, const char* rlabel, const char* rval) {
+  const int x = 6, w = 228, h = 74, r = 22;
+  uint16_t box = solid ? col : blendPct(col, cBg, 20);
+  uint16_t tx = solid ? onColor(col) : cText;
+  uint16_t lab = solid ? blendPct(tx, col, 80) : col;
+  uint16_t track = solid ? blendPct(tx, col, 28) : blendPct(col, cBg, 38);
+  uint16_t fill = solid ? tx : col;
+  bool left = cfg.progLeft;
+  int pc = pctOf(frac); if (left) pc = 100 - pc;
+  float shown = left ? 1.0f - frac : frac;
+  char b[24], l2[28];
+  drawRRect(x, y, w, h, r, box, cBg);
+  snprintf(b, sizeof b, "%d%%", pc);
+  if (left) snprintf(l2, sizeof l2, "%s %c LEFT", label, 0xB7); else strlcpy(l2, label, sizeof l2);
+  const char* rl = left ? (rlabel[0] == 'H' ? "HOURS" : "DAYS") : rlabel;      // "LEFT" is already said on the left side
+  drawText(F_CAP, l2, x + 18, y + 20, AL_L, lab, box);
+  drawText(F_VAL, b, x + 16, y + 54, AL_L, tx, box);
+  drawText(F_CAP, rl, x + w - 18, y + 20, AL_R, lab, box);
+  drawText(F_VAL, rval, x + w - 16, y + 54, AL_R, tx, box);
+  drawRRect(x + 18, y + 61, w - 36, 7, 3, track, box);
+  drawRRect(x + 18, y + 61, max(7, (int)((w - 36) * shown)), 7, 3, fill, track);
+}
+static void progBoxes(bool solid, const struct tm& t) {          // year (box 1), month (box 2), day (box 3)
+  clearScreen();
+  char rv[12];
+  for (int i = 0; i < 3; i++) {
+    int which = 2 - i;                                             // year, month, day
+    Per p; periodInfo(which, t, p);
+    if (which == 0) snprintf(rv, sizeof rv, "%d:%02d", p.left / 60, p.left % 60); else snprintf(rv, sizeof rv, "%d", p.left);
+    watchBox(6 + 78 * i, cPg[i], solid, p.label, p.frac, which == 0 ? "HOURS LEFT" : "DAYS LEFT", rv);
+  }
+}
+
+static void dotGrid(int n, int filled, int today, int cols, int x0, int y0, int pitch, int size, bool rounded, uint16_t onC) {
+  for (int i = 0; i < n; i++) {
+    int x = x0 + (i % cols) * pitch, y = y0 + (i / cols) * pitch;
+    uint16_t c = (i == today) ? cText : (i < filled ? onC : cTrack);
+    if (rounded) drawRRect(x, y, size, size, size / 3, c, cBg); else tft.fillRect(x, y, size, size, c);
+  }
+}
+static void progDots(int which, const struct tm& t) {             // one square per day (or per hour)
+  clearScreen();
+  Per p; periodInfo(which, t, p);
+  uint16_t col = cPg[2 - which];                                   // year = color 1, month = color 2, day = color 3
+  int pc = pctOf(p.frac); if (cfg.progLeft) pc = 100 - pc;
+  char b[40];
+  drawText(F_CAP, p.label, 18, 30, AL_L, col, cBg);
+  snprintf(b, sizeof b, "%d%% %s", pc, cfg.progLeft ? "left" : "done"); drawText(F_TXT, b, 222, 32, AL_R, cText, cBg);
+  if (which == 2) dotGrid(p.total, t.tm_yday, t.tm_yday, 25, (240 - (25 * 8 - 2)) / 2, 62, 8, 6, false, col);
+  else if (which == 1) dotGrid(p.total, t.tm_mday - 1, t.tm_mday - 1, 7, (240 - (7 * 31 - 5)) / 2, 44, 31, 26, true, col);
+  else dotGrid(24, t.tm_hour, t.tm_hour, 12, (240 - (12 * 19 - 3)) / 2, 86, 19, 16, true, col);
+  if (which == 0) snprintf(b, sizeof b, "%dh %02dm left", p.left / 60, p.left % 60);
+  else if (p.left == 0) strcpy(b, "Last day");
+  else if (p.left == 1) strcpy(b, "1 day left");
+  else snprintf(b, sizeof b, "%d days left", p.left);
+  drawText(F_TXT, b, 120, 214, AL_C, cText, cBg);
+  drawText(F_CAP, p.of, 120, 233, AL_C, cDim, cBg);
+}
+
+static int wrapLines(const Font& f, const char* s, int maxW, char out[][34], int maxLines) {
+  int n = 0; char cur[34] = "";
+  const char* p = s;
+  while (*p && n < maxLines) {
+    char word[34]; int wl = 0;
+    while (*p == ' ') p++;
+    while (*p && *p != ' ' && wl < 32) word[wl++] = *p++;
+    word[wl] = 0;
+    if (!wl) break;
+    char trial[68];
+    if (cur[0]) snprintf(trial, sizeof trial, "%s %s", cur, word); else snprintf(trial, sizeof trial, "%s", word);
+    if (!cur[0] || textW(f, trial) <= maxW) strlcpy(cur, trial, sizeof cur);
+    else { strlcpy(out[n++], cur, 34); strlcpy(cur, word, sizeof cur); }
+  }
+  if (cur[0] && n < maxLines) strlcpy(out[n++], cur, 34);
+  return n;
+}
+
+// ---- countdown to a custom event
+static bool eventValid(const Event& e) { return e.y >= 2000 && e.mo >= 1 && e.mo <= 12 && e.d >= 1 && e.name[0]; }
+struct Cd { int days; long remMin; float frac; char date[34]; };
+static void cdInfo(const Event& e, const struct tm& t, Cd& c) {
+  int32_t today = daysFromCivil(t.tm_year + 1900, t.tm_mon + 1, t.tm_mday), target = daysFromCivil(e.y, e.mo, e.d);
+  c.days = (int)(target - today);
+  long nowMin = (long)today * 1440 + t.tm_hour * 60 + t.tm_min, tgtMin = (long)target * 1440 + e.h * 60 + e.mi;
+  c.remMin = tgtMin - nowMin;
+  long startMin = (long)(e.startDay ? e.startDay : today) * 1440;
+  float f = (tgtMin > startMin) ? (float)(nowMin - startMin) / (float)(tgtMin - startMin) : 1.0f;
+  c.frac = f < 0 ? 0 : (f > 1 ? 1 : f);
+  if (e.h || e.mi) snprintf(c.date, sizeof c.date, "%d %s %d  %c  %02d:%02d", e.d, MOUP[e.mo - 1], e.y, 0xB7, e.h, e.mi);
+  else snprintf(c.date, sizeof c.date, "%d %s %d", e.d, MOUP[e.mo - 1], e.y);
+}
+static const char* cdCaption(int days) { return days > 1 ? "days left" : days == 1 ? "day left" : days == 0 ? "today" : days == -1 ? "day ago" : "days ago"; }
+
+static void progCountdown(int st, const Event& e, const struct tm& t) {
+  clearScreen();
+  if (!eventValid(e)) {
+    char hl[3][34];
+    drawText(F_LBL, "No event set", 14, 90, AL_L, cText, cBg);
+    int nh = wrapLines(F_TXT, "Add one in the Faces tab", 200, hl, 2);
+    for (int i = 0; i < nh; i++) drawText(F_TXT, hl[i], 16, 126 + 28 * i, AL_L, cDim, cBg);
+    return;
+  }
+  Cd c; cdInfo(e, t, c);
+  char b[48], hl[3][34], nl[3][34];
+  int ad = c.days < 0 ? -c.days : c.days;
+  if (st == 3) {                                                   // big: a huge number, then the words, filling the screen
+    snprintf(b, sizeof b, "%d", ad);
+    drawText(F_CAP, c.date, 226, 22, AL_R, cDim, cBg);
+    drawText(ad > 999 ? F_TIME : F_HUGE, b, 12, ad > 999 ? 100 : 114, AL_L, cText, cBg);
+    drawText(F_LBL, cdCaption(c.days), 16, 152, AL_L, cDim, cBg);
+    int nn = wrapLines(F_LBL, e.name, 212, nl, 2);
+    for (int i = 0; i < nn; i++) drawText(F_LBL, nl[i], 16, 192 + 36 * i, AL_L, cAccent, cBg);
+  } else if (st == 4) {                                            // sentence: "10 days / are left for / the exam"
+    char A[24], B[34];
+    if (c.days > 1) { snprintf(A, sizeof A, "%d days", c.days); strcpy(B, "are left for"); }
+    else if (c.days == 1) { strcpy(A, "One day"); strcpy(B, "is left for"); }
+    else if (c.days == 0) { strcpy(A, "Today"); strcpy(B, "is"); }
+    else if (c.days == -1) { strcpy(A, "One day"); strcpy(B, "has passed since"); }
+    else { snprintf(A, sizeof A, "%d days", -c.days); strcpy(B, "have passed since"); }
+    int nb = wrapLines(F_LBL, B, 212, hl, 2), nn = wrapLines(F_LBL, e.name, 212, nl, 2);
+    int lines = 1 + nb + nn, pitch = 38, y = (214 - lines * pitch) / 2 + 34;
+    drawText(F_LBL, A, 14, y, AL_L, cText, cBg);
+    for (int i = 0; i < nb; i++) drawText(F_LBL, hl[i], 14, y + pitch * (1 + i), AL_L, cDim, cBg);
+    for (int i = 0; i < nn; i++) drawText(F_LBL, nl[i], 14, y + pitch * (1 + nb + i), AL_L, cAccent, cBg);
+    drawText(F_CAP, c.date, 16, 232, AL_L, cDim, cBg);
+  } else if (st == 5) {                                            // boxes: days / hours / minutes in the three colors
+    wrapLines(F_LBL, e.name, 212, nl, 1);
+    drawText(F_LBL, nl[0], 14, 44, AL_L, cAccent, cBg);
+    drawText(F_CAP, c.date, 16, 66, AL_L, cDim, cBg);
+    long rem = c.remMin < 0 ? 0 : c.remMin;
+    int v[3] = {(int)(rem / 1440), (int)((rem % 1440) / 60), (int)(rem % 60)};
+    static const char* const lb[3] = {"DAYS", "HOURS", "MINS"};
+    for (int i = 0; i < 3; i++) {
+      int x = 6 + 78 * i;
+      uint16_t tx = onColor(cPg[i]);
+      drawRRect(x, 80, 72, 108, 20, cPg[i], cBg);
+      snprintf(b, sizeof b, "%d", v[i]);
+      drawText(F_VAL, b, x + 36, 80 + 64, AL_C, tx, cPg[i]);
+      drawText(F_CAP, lb[i], x + 36, 80 + 92, AL_C, blendPct(tx, cPg[i], 80), cPg[i]);
+    }
+    drawRRect(24, 204, 192, 10, 5, cTrack, cBg);
+    drawRRect(24, 204, max(10, (int)(192 * c.frac)), 10, 5, cAccent, cTrack);
+    snprintf(b, sizeof b, "%d%% OF THE WAY", pctOf(c.frac)); drawText(F_CAP, b, 120, 232, AL_C, cDim, cBg);
+  } else {                                                         // bar: name, number, progress since the countdown started
+    int nn = wrapLines(F_LBL, e.name, 212, nl, 2);
+    for (int i = 0; i < nn; i++) drawText(F_LBL, nl[i], 14, 38 + 36 * i, AL_L, cAccent, cBg);
+    drawText(F_CAP, c.date, 16, 38 + 36 * nn + 2, AL_L, cDim, cBg);
+    snprintf(b, sizeof b, "%d", ad);
+    int w1 = textW(F_TIME, b);
+    drawText(F_TIME, b, 14, 168, AL_L, cText, cBg);
+    drawText(F_TXT, cdCaption(c.days), 14 + w1 + 10, 168, AL_L, cDim, cBg);
+    drawRRect(16, 190, 208, 16, 8, cTrack, cBg);
+    drawRRect(16, 190, max(16, (int)(208 * c.frac)), 16, 8, cAccent, cTrack);
+    snprintf(b, sizeof b, "%d%% OF THE WAY", pctOf(c.frac)); drawText(F_CAP, b, 16, 230, AL_L, cDim, cBg);
+  }
+}
+
+void renderProgress() {
+  static bool syncing = false;
+  if (!timeValid()) {
+    syncing = true;
+    if (fullRedraw) { fullRedraw = false; tft.fillScreen(cBg); drawText(F_TXT, "Syncing time...", 120, 126, AL_C, cDim, cBg); }
+    return;
+  }
+  if (syncing) { syncing = false; fullRedraw = true; }
+  time_t now = time(nullptr); struct tm t; localtime_r(&now, &t);
+  if (t.tm_mday != lastDay) { lastDay = t.tm_mday; fullRedraw = true; }
+  bool full = fullRedraw;
+  if (!full && t.tm_min == lastMin) return;                        // nothing visible changes between minutes
+  fullRedraw = false; lastMin = t.tm_min;
+  int st = vProg > 6 ? 0 : vProg, arg = vArg & 3;
+  if (st <= 1) progBoxes(st == 0, t);
+  else if (st == 2) progDots(arg > 2 ? 0 : arg, t);
+  else progCountdown(st, cfg.ev[arg], t);                          // 3 big, 4 sentence, 5 boxes, 6 bar
 }
 
 // ------------------------------------------------------------------ status page
@@ -1363,6 +1581,11 @@ void handleConfigPost() {
   JsonDocument d;
   if (deserializeJson(d, server.arg("plain"))) { server.send(400, "application/json", "{\"error\":\"Invalid JSON\"}"); return; }
   settingsFromJson(cfg, d.as<JsonVariantConst>());
+  if (timeValid()) {                                    // a new countdown starts counting from today unless a start date was given
+    time_t n0 = time(nullptr); struct tm lt; localtime_r(&n0, &lt);
+    int32_t today = daysFromCivil(lt.tm_year + 1900, lt.tm_mon + 1, lt.tm_mday);
+    for (int i = 0; i < 4; i++) if (cfg.ev[i].y && !cfg.ev[i].startDay) cfg.ev[i].startDay = today;
+  }
   bool saved = fsOk && saveSettings(cfg);
   server.send(200, "application/json", saved ? "{\"ok\":true,\"saved\":true}" : "{\"ok\":true,\"saved\":false}");
   applyConfig();
@@ -1375,7 +1598,7 @@ void handlePage() {
   }
   applyFaces();
   setPage(n);
-  if (pinnedPage() >= 0) { cfg.mode = (n == PAGE_CAL) ? 6 : n + 1; saveSettings(cfg); }   // in single-page mode, this changes the pinned page
+  if (pinnedPage() >= 0) { cfg.mode = (n == PAGE_CAL) ? 6 : (n == PAGE_PROG ? 7 : n + 1); saveSettings(cfg); }   // in single-page mode, this changes the pinned page
   sendOk();
 }
 
@@ -1675,6 +1898,7 @@ void loop() {
     case PAGE_WEATHER: renderWeather(); break;
     case PAGE_STATS:   renderStats(); break;
     case PAGE_CAL:     renderCalendar(); break;
+    case PAGE_PROG:    renderProgress(); break;
     case PAGE_GIF:     gifTick(); break;
   }
 

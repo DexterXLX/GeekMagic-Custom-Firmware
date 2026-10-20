@@ -6,7 +6,7 @@
 // ---- Hardware (verify against your board!) ----
 #define BL_PIN        5      // backlight, PWM
 #define BL_ACTIVE_LOW 1      // 1 = LOW turns the backlight on
-#define FW_VERSION    "1.9.0"
+#define FW_VERSION    "2.1.0"
 #define CONFIG_PATH   "/smalltv_cfg.json"   // own name: never touches the stock firmware's /config.json
 #define GIF_DIR       "/image"   // same folder the stock firmware uses for GIFs
 #define GIF_DIR2      "/gif"     // also searched, in case stock GIFs live here
@@ -15,9 +15,15 @@
 
 #define MAX_SLOTS 10
 #define MAX_PL 4                        // number of playlists
-struct Slot { uint8_t page, style; uint16_t secs; };   // one playlist item: which page, which face, how long
+struct Slot { uint8_t page, style, arg; uint16_t secs; };   // one playlist item: which page, which face, how long
 
-enum Page : uint8_t { PAGE_CLOCK = 0, PAGE_WEATHER = 1, PAGE_STATS = 2, PAGE_GIF = 3, PAGE_CAL = 4, PAGE_COUNT = 5 };
+enum Page : uint8_t { PAGE_CLOCK = 0, PAGE_WEATHER = 1, PAGE_STATS = 2, PAGE_GIF = 3, PAGE_CAL = 4, PAGE_PROG = 5, PAGE_COUNT = 6 };
+
+struct Event {                          // a custom countdown ("the exam", "my flight", ...)
+  char name[24] = "";
+  uint16_t y = 0; uint8_t mo = 0, d = 0, h = 0, mi = 0;   // y = 0 means "not set"
+  int32_t startDay = 0;                 // days since 1970 the countdown started from (0 = set to today when saved)
+};
 
 struct Settings {
   char     hostname[24]  = "smalltv";
@@ -32,7 +38,7 @@ struct Settings {
   uint8_t  nightStart    = 22;              // hour
   uint8_t  nightEnd      = 7;               // hour
   uint8_t  nightBright   = 10;              // percent
-  uint8_t  pages         = 0x07;            // bit mask: 1 clock, 2 weather, 4 stats, 8 gif, 16 calendar
+  uint8_t  pages         = 0x07;            // bit mask: 1 clock, 2 weather, 4 stats, 8 gif, 16 calendar, 32 progress
   uint16_t rotateSec     = 10;
   char     accent[8]     = "#FF6B57";
   char     timeColor[8]  = "#FFFFFF";         // white = follow the theme
@@ -44,7 +50,7 @@ struct Settings {
   char     mqttPass[48]  = "";
   char     mqttTopic[32] = "smalltv";
   bool     haDiscovery   = true;
-  uint8_t  mode          = 0;               // 0 = rotate pages, 1..4 = keep one page (clock, weather, status, GIF), 5 = custom playlist, 6 = calendar only
+  uint8_t  mode          = 0;               // 0 = rotate pages, 1..4 = keep one page (clock, weather, status, GIF), 5 = custom playlist, 6 = calendar only, 7 = progress only
   Slot     list[MAX_PL][MAX_SLOTS];           // custom playlists
   uint8_t  listN[MAX_PL] = {0, 0, 0, 0};
   char     plName[MAX_PL][12] = {"Playlist 1", "Playlist 2", "Playlist 3", "Playlist 4"};
@@ -63,6 +69,11 @@ struct Settings {
   char     weekendColor[8] = "#FF6B57";
   bool     calOther      = true;            // show the neighbouring months' days, dimmed
   bool     calClock      = true;            // small clock in the calendar header
+  uint8_t  progStyle     = 0;               // 0 boxes (solid), 1 boxes (tinted), 2 dots, 3 countdown big, 4 sentence, 5 boxes, 6 bar
+  uint8_t  progArg       = 0;               // dots: 0 day, 1 month, 2 year. Countdown faces: event 0..3
+  char     progC[3][8]   = {"#FF453A", "#FF9F0A", "#30D158"};   // year, month, day colors
+  bool     progLeft      = false;           // show the percentage that is LEFT instead of the percentage done
+  Event    ev[4];
   bool     gifAuto       = false;           // play every GIF in turn instead of looping one
   uint16_t gifSecs       = 20;
   uint16_t gifSpeed      = 100;             // percent of the GIF's own speed              // ... switching after this many seconds (at the end of a loop)
@@ -96,12 +107,12 @@ inline void settingsFromJson(Settings& s, JsonVariantConst v) {
   if (!v["nightStart"].isNull())   s.nightStart = constrain((int)v["nightStart"], 0, 23);
   if (!v["nightEnd"].isNull())     s.nightEnd = constrain((int)v["nightEnd"], 0, 23);
   if (!v["nightBright"].isNull())  s.nightBright = constrain((int)v["nightBright"], 0, 100);
-  if (!v["pages"].isNull())        s.pages = (uint8_t)((int)v["pages"] & 0x1F);
+  if (!v["pages"].isNull())        s.pages = (uint8_t)((int)v["pages"] & 0x3F);
   if (!v["rotateSec"].isNull())    s.rotateSec = constrain((int)v["rotateSec"], 3, 600);
   if (!v["mqttEnabled"].isNull())  s.mqttEnabled = v["mqttEnabled"];
   if (!v["mqttPort"].isNull())     s.mqttPort = v["mqttPort"];
   if (!v["haDiscovery"].isNull())  s.haDiscovery = v["haDiscovery"];
-  if (!v["mode"].isNull())         s.mode = constrain((int)v["mode"], 0, 6);
+  if (!v["mode"].isNull())         s.mode = constrain((int)v["mode"], 0, 7);
   if (!v["clockStyle"].isNull())   s.clockStyle = constrain((int)v["clockStyle"], 0, 8);
   if (!v["weatherStyle"].isNull()) s.weatherStyle = constrain((int)v["weatherStyle"], 0, 5);
   if (!v["theme"].isNull())        s.theme = constrain((int)v["theme"], 0, 3);
@@ -115,6 +126,24 @@ inline void settingsFromJson(Settings& s, JsonVariantConst v) {
   if (!v["calWeekend"].isNull())   s.calWeekend = v["calWeekend"];
   if (!v["calOther"].isNull())     s.calOther = v["calOther"];
   if (!v["calClock"].isNull())     s.calClock = v["calClock"];
+  if (!v["progStyle"].isNull())    s.progStyle = constrain((int)v["progStyle"], 0, 6);
+  if (!v["progArg"].isNull())      s.progArg = constrain((int)v["progArg"], 0, 3);
+  if (!v["progLeft"].isNull())     s.progLeft = v["progLeft"];
+  copyStr(s.progC[0], sizeof(s.progC[0]), v["progC1"]);
+  copyStr(s.progC[1], sizeof(s.progC[1]), v["progC2"]);
+  copyStr(s.progC[2], sizeof(s.progC[2]), v["progC3"]);
+  JsonArrayConst evs = v["ev"].as<JsonArrayConst>();
+  if (!evs.isNull()) {
+    int ei = 0;
+    for (JsonVariantConst q : evs) {
+      if (ei >= 4) break;
+      Event& e = s.ev[ei++];
+      copyStr(e.name, sizeof(e.name), q["n"]);
+      e.y = constrain((int)(q["y"] | 0), 0, 2100); e.mo = constrain((int)(q["m"] | 0), 0, 12); e.d = constrain((int)(q["d"] | 0), 0, 31);
+      e.h = constrain((int)(q["h"] | 0), 0, 23); e.mi = constrain((int)(q["i"] | 0), 0, 59);
+      e.startDay = q["s"] | 0;
+    }
+  }
   if (!v["gifAuto"].isNull())      s.gifAuto = v["gifAuto"];
   if (!v["gifSecs"].isNull())      s.gifSecs = constrain((int)v["gifSecs"], 3, 3600);
   if (!v["gifSpeed"].isNull())     s.gifSpeed = constrain((int)v["gifSpeed"], 25, 300);
@@ -131,7 +160,7 @@ inline void settingsFromJson(Settings& s, JsonVariantConst v) {
         if (s.listN[pi] >= MAX_SLOTS) break;
         int p = o["p"] | 0, f = o["s"] | 0, t = o["t"] | 10;
         Slot& sl = s.list[pi][s.listN[pi]++];
-        sl.page = constrain(p, 0, 4); sl.style = constrain(f, 0, 8); sl.secs = constrain(t, 1, 600);
+        sl.page = constrain(p, 0, 5); sl.style = constrain(f, 0, 9); sl.arg = constrain((int)(o["a"] | 0), 0, 3); sl.secs = constrain(t, 1, 600);
       }
       pi++;
     }
@@ -144,7 +173,7 @@ inline void settingsFromJson(Settings& s, JsonVariantConst v) {
       if (s.listN[0] >= MAX_SLOTS) break;
       int p = o["p"] | 0, f = o["s"] | 0, t = o["t"] | 10;
       Slot& sl = s.list[0][s.listN[0]++];
-      sl.page = constrain(p, 0, 4); sl.style = constrain(f, 0, 8); sl.secs = constrain(t, 1, 600);
+      sl.page = constrain(p, 0, 5); sl.style = constrain(f, 0, 9); sl.arg = constrain((int)(o["a"] | 0), 0, 3); sl.secs = constrain(t, 1, 600);
     }
   }
   if (s.pages == 0) s.pages = 0x01;
@@ -166,6 +195,13 @@ inline void settingsToJson(const Settings& s, JsonDocument& d, bool includeSecre
   d["showSeconds"] = s.showSeconds;     d["showDate"] = s.showDate;
   d["showInfo"] = s.showInfo;           d["infoRight"] = s.infoRight;
   d["pageDots"] = s.pageDots;
+  d["progStyle"] = s.progStyle;         d["progArg"] = s.progArg;         d["progLeft"] = s.progLeft;
+  d["progC1"] = s.progC[0]; d["progC2"] = s.progC[1]; d["progC3"] = s.progC[2];
+  JsonArray evs = d["ev"].to<JsonArray>();
+  for (int i = 0; i < 4; i++) {
+    JsonObject q = evs.add<JsonObject>(); const Event& e = s.ev[i];
+    q["n"] = e.name; q["y"] = e.y; q["m"] = e.mo; q["d"] = e.d; q["h"] = e.h; q["i"] = e.mi; q["s"] = e.startDay;
+  }
   d["calStyle"] = s.calStyle;           d["calMon"] = s.calMon;           d["calWeekend"] = s.calWeekend;
   d["weekendColor"] = s.weekendColor;   d["calOther"] = s.calOther;         d["calClock"] = s.calClock;
   d["gifAuto"] = s.gifAuto;             d["gifSecs"] = s.gifSecs;         d["gifSpeed"] = s.gifSpeed;
@@ -174,7 +210,7 @@ inline void settingsToJson(const Settings& s, JsonDocument& d, bool includeSecre
     JsonObject q = pls.add<JsonObject>();
     q["n"] = s.plName[pi];
     JsonArray items = q["l"].to<JsonArray>();
-    for (int i = 0; i < s.listN[pi]; i++) { JsonObject o = items.add<JsonObject>(); o["p"] = s.list[pi][i].page; o["s"] = s.list[pi][i].style; o["t"] = s.list[pi][i].secs; }
+    for (int i = 0; i < s.listN[pi]; i++) { JsonObject o = items.add<JsonObject>(); o["p"] = s.list[pi][i].page; o["s"] = s.list[pi][i].style; o["a"] = s.list[pi][i].arg; o["t"] = s.list[pi][i].secs; }
   }
   d["plActive"] = s.plActive;
   d["mqttPass"] = includeSecrets ? s.mqttPass : "";

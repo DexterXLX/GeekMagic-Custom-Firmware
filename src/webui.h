@@ -66,6 +66,8 @@ ul.files .sel{color:var(--accent);font-weight:600}
 .pl select{width:auto;flex:1 1 110px}
 .pl input{width:70px}
 .pl .n{width:20px;color:var(--dim)}
+.pl input[type=text]{flex:1 1 130px;width:auto}
+.pl input[type=date],.pl input[type=time]{width:auto}
 .pl button{padding:6px 10px;min-width:36px}
 .sw{display:flex;flex-wrap:wrap;gap:8px;padding:2px 0 10px;border-bottom:1px solid var(--line)}
 .sw button{width:30px;height:30px;border-radius:50%;border:2px solid var(--line);cursor:pointer;padding:0}
@@ -92,6 +94,7 @@ dt{color:var(--dim)}dd{margin:0;text-align:right;font-variant-numeric:tabular-nu
       <button class="chip" data-p="2" aria-pressed="false">Status</button>
       <button class="chip" data-p="3" aria-pressed="false">GIF</button>
       <button class="chip" data-p="4" aria-pressed="false">Calendar</button>
+      <button class="chip" data-p="5" aria-pressed="false">Progress</button>
     </div>
   </div>
 
@@ -116,6 +119,7 @@ dt{color:var(--dim)}dd{margin:0;text-align:right;font-variant-numeric:tabular-nu
           <option value="4">GIF only</option>
           <option value="5">Custom playlist</option>
           <option value="6">Calendar only</option>
+          <option value="7">Progress only</option>
         </select></label>
     </fieldset>
     <fieldset><legend>Playlists</legend>
@@ -136,6 +140,7 @@ dt{color:var(--dim)}dd{margin:0;text-align:right;font-variant-numeric:tabular-nu
         <label><input type="checkbox" data-bit="4"> Status</label>
         <label><input type="checkbox" data-bit="8"> GIF</label>
         <label><input type="checkbox" data-bit="16"> Calendar</label>
+        <label><input type="checkbox" data-bit="32"> Progress</label>
       </div>
       <label><span>Seconds per page</span><input type="number" min="3" max="600" data-k="rotateSec" data-num></label>
     </fieldset>
@@ -201,6 +206,27 @@ dt{color:var(--dim)}dd{margin:0;text-align:right;font-variant-numeric:tabular-nu
       <label><span>Show days of the neighbouring months<small>Dimmed</small></span><input type="checkbox" data-k="calOther"></label>
       <label><span>Clock in the calendar header</span><input type="checkbox" data-k="calClock"></label>
       <p class="dim" style="margin:8px 0">Show it with the Calendar button above, the Calendar checkbox in Pages, "Calendar only", or as a playlist item. Today uses your accent color.</p>
+    </fieldset>
+    <fieldset><legend>Progress</legend>
+      <label><span>Progress style<small>Watch boxes show year, month and day together. Dots shows one period. Countdown styles use your events below.</small></span>
+        <select data-k="progStyle" data-num id="pstyle">
+          <option value="0">Watch boxes (solid)</option><option value="1">Watch boxes (tinted)</option><option value="2">Dots</option>
+          <option value="3">Countdown: Big</option><option value="4">Countdown: Sentence</option>
+          <option value="5">Countdown: Boxes</option><option value="6">Countdown: Bar</option>
+        </select></label>
+      <label><span>Show<small>Dots: day, month or year. Countdown: which event</small></span><select data-k="progArg" data-num id="parg"></select></label>
+      <label><span>Show the percentage that is left<small>Off = percentage done</small></span><input type="checkbox" data-k="progLeft"></label>
+      <label><span>Year color</span><input type="color" data-k="progC1"></label>
+      <div class="sw" data-for="progC1"></div>
+      <label><span>Month color</span><input type="color" data-k="progC2"></label>
+      <div class="sw" data-for="progC2"></div>
+      <label><span>Day color</span><input type="color" data-k="progC3"></label>
+      <div class="sw" data-for="progC3"></div>
+      <p class="dim" style="margin:8px 0">Show it with the Progress button, the Progress checkbox in Pages, "Progress only", or as a playlist item. The three colors are also used by Dots and by the countdown boxes.</p>
+    </fieldset>
+    <fieldset><legend>Countdown events</legend>
+      <p class="dim" style="margin:8px 0">Up to four. Type the name the way it should read in the sentence, for example "the exam" or "my flight" (English letters, digits and basic punctuation). "Count from" is optional; it defaults to the day you save.</p>
+      <div id="evlist"></div>
     </fieldset>
   </section>
 
@@ -325,13 +351,39 @@ $('#theme').onclick=()=>{const d=matchMedia('(prefers-color-scheme:dark)').match
 /* tabs */
 $$('#tabs button').forEach(b=>b.onclick=()=>{$$('#tabs button').forEach(x=>x.setAttribute('aria-selected',x===b));$$('main section').forEach(s=>s.classList.toggle('on',s.id===b.dataset.t));if(b.dataset.t==='gifs')loadGifs()});
 
+/* progress style + countdown events */
+const PERIODS=['Day','Month','Year'];
+let evs=[];
+const esc=t=>String(t).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const evName=i=>(evs[i]&&evs[i].n)?evs[i].n:('Event '+(i+1));
+function argOptions(face){return face<=1?[]:(face===2?PERIODS:[0,1,2,3].map(evName))}
+function syncArg(sel){const f=+$('#pstyle').value,a=argOptions(f),s=$('#parg');s.innerHTML=a.length?opts(a,Math.min(sel,a.length-1)):'<option value="0">-</option>';s.disabled=!a.length;if(a.length)s.value=Math.min(sel,a.length-1)}
+$('#pstyle').addEventListener('change',()=>syncArg(0));
+const d2s=(y,m,d)=>y?`${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`:'';
+const days2s=n=>n?new Date(n*86400000).toISOString().slice(0,10):'';
+const s2days=t=>{const m=/^(\d+)-(\d+)-(\d+)$/.exec(t);return m?Math.round(Date.UTC(+m[1],+m[2]-1,+m[3])/86400000):0};
+function initEvs(){evs=[0,1,2,3].map(i=>{const q=(cfg.ev||[])[i]||{};return{n:q.n||'',y:q.y||0,m:q.m||0,d:q.d||0,h:q.h||0,i:q.i||0,s:q.s||0}});renderEvs()}
+function renderEvs(){
+  const box=$('#evlist');box.innerHTML='';
+  evs.forEach((e,k)=>{
+    const d=document.createElement('div');d.className='pl';
+    d.innerHTML=`<span class="n">${k+1}</span><input type="text" class="en" maxlength="23" placeholder="the exam" value="${esc(e.n)}" aria-label="Name"><input type="date" class="ed" value="${d2s(e.y,e.m,e.d)}" aria-label="Date"><input type="time" class="et" value="${String(e.h).padStart(2,'0')}:${String(e.i).padStart(2,'0')}" aria-label="Time"><label class="dim" style="border:0;padding:0;gap:6px;justify-content:flex-start">Count from <input type="date" class="es" value="${days2s(e.s)}" aria-label="Count from"></label><button class="btn" type="button">Clear</button>`;
+    d.querySelector('.en').oninput=x=>{e.n=x.target.value;dirty=true;syncArg(+$('#parg').value||0);if(typeof renderList==='function')renderList()};
+    d.querySelector('.ed').onchange=x=>{const m=/^(\d+)-(\d+)-(\d+)$/.exec(x.target.value);e.y=m?+m[1]:0;e.m=m?+m[2]:0;e.d=m?+m[3]:0;if(!d.querySelector('.es').value)e.s=0;dirty=true};
+    d.querySelector('.et').onchange=x=>{const m=/^(\d+):(\d+)$/.exec(x.target.value);e.h=m?+m[1]:0;e.i=m?+m[2]:0;dirty=true};
+    d.querySelector('.es').onchange=x=>{e.s=s2days(x.target.value);dirty=true};
+    d.querySelector('button').onclick=()=>{Object.assign(e,{n:'',y:0,m:0,d:0,h:0,i:0,s:0});dirty=true;renderEvs();syncArg(+$('#parg').value||0);renderList()};
+    box.appendChild(d);
+  });
+}
+
 /* playlists */
-const PGN=['Clock','Weather','Status','GIF','Calendar'];
-const FACES=[['Classic','Accent','Cards','Stacked','Day progress','Glance','Week','Sidebar','Date'],['Forecast','Card','Tiles','Range','Hourly','List'],[],[],['Month','Tiles','Focus']];
+const PGN=['Clock','Weather','Status','GIF','Calendar','Progress'];
+const FACES=[['Classic','Accent','Cards','Stacked','Day progress','Glance','Week','Sidebar','Date'],['Forecast','Card','Tiles','Range','Hourly','List'],[],[],['Month','Tiles','Focus'],['Watch boxes (solid)','Watch boxes (tinted)','Dots','Countdown: Big','Countdown: Sentence','Countdown: Boxes','Countdown: Bar']];
 let pls=[],plSel=0,plAct=0;
 const opts=(a,sel)=>a.map((n,i)=>`<option value="${i}"${i===sel?' selected':''}>${n}</option>`).join('');
 function initPls(){
-  pls=[0,1,2,3].map(i=>{const q=(cfg.pl||[])[i]||{};return{n:q.n||('Playlist '+(i+1)),l:(q.l||[]).map(x=>({p:x.p,s:x.s,t:x.t}))}});
+  pls=[0,1,2,3].map(i=>{const q=(cfg.pl||[])[i]||{};return{n:q.n||('Playlist '+(i+1)),l:(q.l||[]).map(x=>({p:x.p,s:x.s,a:x.a||0,t:x.t}))}});
   plAct=cfg.plActive||0;if(plSel>3)plSel=0;renderTabs(true);renderList();
 }
 function renderTabs(setName){
@@ -346,16 +398,17 @@ function renderList(){
   if(!L.length){box.innerHTML='<p class="dim">No items yet. Press Add item.</p>';return}
   L.forEach((it,i)=>{
     const d=document.createElement('div');d.className='pl';
-    const fc=FACES[it.p]||[];
-    d.innerHTML=`<span class="n">${i+1}</span><select class="lp" aria-label="Page">${opts(PGN,it.p)}</select>${fc.length?`<select class="ls" aria-label="Face">${opts(fc,it.s)}</select>`:''}<input class="lt" type="number" min="1" max="600" value="${it.t}" aria-label="Seconds"><span class="dim">sec</span><button class="btn" type="button" data-a="up" aria-label="Move up">&#9650;</button><button class="btn" type="button" data-a="dn" aria-label="Move down">&#9660;</button><button class="btn" type="button" data-a="rm" aria-label="Remove">&#10005;</button>`;
-    d.querySelector('.lp').onchange=e=>{it.p=+e.target.value;it.s=0;dirty=true;renderList()};
-    const ls=d.querySelector('.ls');if(ls)ls.onchange=e=>{it.s=+e.target.value;dirty=true};
+    const fc=FACES[it.p]||[],ao=it.p===5?argOptions(it.s):[];
+    d.innerHTML=`<span class="n">${i+1}</span><select class="lp" aria-label="Page">${opts(PGN,it.p)}</select>${fc.length?`<select class="ls" aria-label="Face">${opts(fc,it.s)}</select>`:''}${ao.length?`<select class="la" aria-label="Show">${opts(ao,it.a||0)}</select>`:''}<input class="lt" type="number" min="1" max="600" value="${it.t}" aria-label="Seconds"><span class="dim">sec</span><button class="btn" type="button" data-a="up" aria-label="Move up">&#9650;</button><button class="btn" type="button" data-a="dn" aria-label="Move down">&#9660;</button><button class="btn" type="button" data-a="rm" aria-label="Remove">&#10005;</button>`;
+    d.querySelector('.lp').onchange=e=>{it.p=+e.target.value;it.s=0;it.a=0;dirty=true;renderList()};
+    const ls=d.querySelector('.ls');if(ls)ls.onchange=e=>{it.s=+e.target.value;it.a=0;dirty=true;if(it.p===5)renderList()};
+    const la=d.querySelector('.la');if(la)la.onchange=e=>{it.a=+e.target.value;dirty=true};
     d.querySelector('.lt').oninput=e=>{it.t=Math.max(1,Math.min(600,+e.target.value||1));dirty=true};
     d.querySelectorAll('button').forEach(b=>b.onclick=()=>{const a=b.dataset.a;dirty=true;if(a==='rm')L.splice(i,1);else if(a==='up'&&i>0)[L[i-1],L[i]]=[L[i],L[i-1]];else if(a==='dn'&&i<L.length-1)[L[i+1],L[i]]=[L[i],L[i+1]];renderList();renderTabs(false)});
     box.appendChild(d);
   });
 }
-$('#padd').onclick=()=>{const L=pls[plSel].l;if(L.length>=10){toast('Up to 10 items per playlist');return}L.push({p:L.length&&L[L.length-1].p===0?1:0,s:0,t:10});dirty=true;renderList();renderTabs(false)};
+$('#padd').onclick=()=>{const L=pls[plSel].l;if(L.length>=10){toast('Up to 10 items per playlist');return}L.push({p:L.length&&L[L.length-1].p===0?1:0,s:0,a:0,t:10});dirty=true;renderList();renderTabs(false)};
 
 /* color swatches */
 const PRESET=['#FF6B57','#FF9F0A','#FFD60A','#A3E635','#30D158','#2DD4BF','#64D2FF','#0A84FF','#BF5AF2','#FF375F','#FFFFFF'];
@@ -371,7 +424,7 @@ function fill(){
   const o=[...$('#tzpreset').options].find(x=>x.value===cfg.tz);$('#tzpreset').value=o?o.value:'';
   setAccent(cfg.accent||'#2DD4BF');$('#pt').textContent=(cfg.mqttTopic||'smalltv')+'/page/set';
 }
-async function loadCfg(){cfg=await api('/api/config');fill();initPls()}
+async function loadCfg(){cfg=await api('/api/config');fill();initEvs();initPls();syncArg(cfg.progArg||0)}
 $('#tzpreset').onchange=e=>{if(e.target.value)$('#tz').value=e.target.value};
 $('[data-k=accent]').oninput=e=>setAccent(e.target.value);
 $$('[data-k],[data-bit]').forEach(e=>e.addEventListener('input',()=>dirty=true));
@@ -379,7 +432,7 @@ async function saveAll(over){
   const body={};
   $$('[data-k]').forEach(e=>{const k=e.dataset.k;body[k]=e.type==='checkbox'?e.checked:(e.hasAttribute('data-num')?Number(e.value):e.value)});
   body.pages=$$('[data-bit]').reduce((a,e)=>a|(e.checked?+e.dataset.bit:0),0)||1;
-  body.pl=pls;body.plActive=plAct;
+  body.pl=pls;body.plActive=plAct;body.ev=evs;
   Object.assign(body,over||{});
   if(body.mode===5&&!pls[body.plActive].l.length){toast('Add at least one item to the playlist first');return}
   try{const r=await api('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});dirty=false;toast(r.saved===false?'Applied, but not saved: storage unavailable':'Saved');await loadCfg()}catch(e){toast(e.message)}
@@ -393,6 +446,7 @@ function preview(){
   if(p===0)h=`<div class="big">${(st.time||'--:--').slice(0,5)}</div><div class="mid">${st.date||''}</div>`;
   else if(p===1)h=st.temp!==undefined?`<div class="big">${Math.round(st.temp)}°</div><div class="mid">${st.condition}</div><div class="sm">High ${Math.round(st.hi)}  Low ${Math.round(st.lo)}</div>`:'<div class="sm">Fetching weather…</div>';
   else if(p===2)h=`<div class="mid">${st.ip}</div><div class="sm">${st.rssi} dBm · ${Math.round(st.heap/1024)} KB free</div>`;
+  else if(p===5)h=`<div class="mid">Progress</div><div class="sm">${st.date||''}</div>`;
   else if(p===4)h=`<div class="mid">Calendar</div><div class="sm">${st.date||''}</div>`;
   else h=`<div class="mid">GIF</div><div class="sm">${cfg.gif||'none selected'}</div>`;
   s.innerHTML=h;
