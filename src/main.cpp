@@ -33,6 +33,7 @@ PubSubClient mqtt(netClient);
 AnimatedGIF* gif = nullptr;
 
 uint16_t cBg, cPanel, cText, cDim, cTrack, cAccent, cTime, cWeekend, cPg[3];   // cPg: year / month / day colors
+uint16_t cAccMain, cAccSec[7];       // main accent, and the accent each section uses (clock, weather, -, -, calendar, progress, timer)
 char apName[24];
 
 struct Weather {
@@ -120,7 +121,9 @@ void rebuildColors() {
     default: // black
       cBg = C565(0, 0, 0); cPanel = C565(28, 28, 30); cText = C565(255, 255, 255); cDim = C565(142, 142, 147); cTrack = C565(58, 58, 60); break;
   }
-  cAccent = hexTo565(cfg.accent);
+  cAccMain = hexTo565(cfg.accent);
+  for (int i = 0; i < 7; i++) cAccSec[i] = cfg.accSec[i][0] ? hexTo565(cfg.accSec[i]) : cAccMain;
+  cAccent = cAccMain;
   cTime = (strcasecmp(cfg.timeColor, "#FFFFFF") == 0) ? cText : hexTo565(cfg.timeColor);   // white = follow the theme
   cWeekend = hexTo565(cfg.weekendColor);
   for (int i = 0; i < 3; i++) cPg[i] = hexTo565(cfg.progC[i]);
@@ -366,29 +369,40 @@ static int drawText(const Font& f, const char* s, int x, int base, uint8_t al, u
   return w;
 }
 
-// Draws an icon centered at cx,cy. size 64 = full, 32 = half (smoothly reduced); 16-px icons are drawn 1:1.
+// Draws an icon centered at cx,cy at any size from 8 to 96 px (smooth scaling of the 64 px artwork; 16 px icons are drawn 1:1).
 static void drawIcon(const Icon& ic, int cx, int cy, int size, uint16_t bg, int32_t over = -1) {
-  static uint8_t src[3][2][64];
-  const int S = ic.size, f = S / size;
+  static uint8_t src[3][2][64];                         // the two most recent source rows of each layer
+  static int16_t cA[96], cB[96]; static uint16_t wX[96];
+  const int S = ic.size;
   int x0 = cx - size / 2, y0 = cy - size / 2;
-  if (x0 < 0 || y0 < 0 || x0 + size > 240 || y0 + size > 240 || f < 1 || f > 2) return;
-  Rle dec[3];
+  if (size < 8 || size > 96 || x0 < 0 || y0 < 0 || x0 + size > 240 || y0 + size > 240) return;
+  for (int ox = 0; ox < size; ox++) {                   // source column and weight (0..256) for every output column
+    int fx = ((2 * ox + 1) * S * 128) / size - 128, c0 = fx >> 8, w = fx & 255;
+    if (c0 < 0) { c0 = 0; w = 0; }
+    if (c0 >= S - 1) { c0 = S - 1; w = 0; }
+    cA[ox] = c0; cB[ox] = (c0 + 1 < S) ? c0 + 1 : c0; wX[ox] = w;
+  }
+  Rle dec[3]; int got[3] = {-1, -1, -1};
   for (int l = 0; l < ic.layers; l++) { dec[l].p = ic.bmp + ic.off[l]; dec[l].left = 0; dec[l].v = 0; }
   tft.startWrite();
   tft.setAddrWindow(x0, y0, size, size);
-  for (int r = 0; r < size; r++) {
+  for (int oy = 0; oy < size; oy++) {
+    int fy = ((2 * oy + 1) * S * 128) / size - 128, r0 = fy >> 8, wy = fy & 255;
+    if (r0 < 0) { r0 = 0; wy = 0; }
+    if (r0 >= S - 1) { r0 = S - 1; wy = 0; }
+    int r1 = (wy && r0 + 1 < S) ? r0 + 1 : r0;
     for (int l = 0; l < ic.layers; l++)
-      for (int k = 0; k < f; k++)
-        for (int c = 0; c < S; c++) src[l][k][c] = rleNext(dec[l]);
-    for (int x = 0; x < size; x++) {
-      uint16_t px = bg;
+      while (got[l] < r1) { got[l]++; uint8_t* d = src[l][got[l] & 1]; for (int c = 0; c < S; c++) d[c] = rleNext(dec[l]); }
+    for (int ox = 0; ox < size; ox++) {
+      uint16_t px = bg; int wx = wX[ox];
       for (int l = 0; l < ic.layers; l++) {
-        uint16_t sum = 0;
-        for (int k = 0; k < f; k++) for (int j = 0; j < f; j++) sum += src[l][k][x * f + j];
-        uint8_t a = (f == 1) ? (uint8_t)sum : (uint8_t)min(15, (int)(sum * 6) / (f * f * 5));
-        px = mix565(px, (over >= 0 && l == 0) ? (uint16_t)over : ic.color[l], a);
+        const uint8_t* ra = src[l][r0 & 1]; const uint8_t* rb = src[l][r1 & 1];
+        uint32_t top = ra[cA[ox]] * (256 - wx) + ra[cB[ox]] * wx, bot = rb[cA[ox]] * (256 - wx) + rb[cB[ox]] * wx;
+        int a = (int)((top * (256 - wy) + bot * wy + 32768) >> 16);
+        if (size < S) a = min(15, (a * 6 + 2) / 5);      // shrinking thins the strokes a little: compensate
+        px = mix565(px, (over >= 0 && l == 0) ? (uint16_t)over : ic.color[l], (uint8_t)a);
       }
-      rowBuf[x] = px;
+      rowBuf[ox] = px;
     }
     tft.pushPixels(rowBuf, size);
   }
@@ -434,11 +448,11 @@ static void drawDots() {                                // optional indicator: o
   if (n < 2) return;
   int x = 120 - (n - 1) * 6;
   if (list) {
-    for (int k = 0; k < n; k++) { tft.fillCircle(x, 235, 2, k == curSlot ? cAccent : cTrack); x += 12; }
+    for (int k = 0; k < n; k++) { tft.fillCircle(x, 235, 2, k == curSlot ? cAccMain : cTrack); x += 12; }
   } else {
     for (uint8_t p = 0; p < PAGE_COUNT; p++) {
       if (!pageUsable(p)) continue;
-      tft.fillCircle(x, 235, 2, p == page ? cAccent : cTrack);
+      tft.fillCircle(x, 235, 2, p == page ? cAccMain : cTrack);
       x += 12;
     }
   }
@@ -574,7 +588,7 @@ static void renderClockExtra(uint8_t st, const struct tm& t, bool full) {
     if (newWx) {
       drawRRect(10, 148, 220, 84, 24, cPanel, cBg);
       if (wx.valid) {
-        drawIcon(*wxIcon(wx.code, wx.isDay), 46, 190, 32, cPanel);
+        drawIcon(*wxIcon(wx.code, wx.isDay), 46, 190, 40, cPanel);
         snprintf(ib, sizeof ib, "%d%c", (int)roundf(wx.temp), 0xB0);
         drawText(F_VAL, ib, 74, 188, AL_L, cText, cPanel);
         drawText(F_CAP, wxShort(wx.code, wx.isDay), 74, 214, AL_L, cDim, cPanel);
@@ -626,7 +640,7 @@ static void renderClockExtra(uint8_t st, const struct tm& t, bool full) {
     }
     if (newWx) {
       if (wx.valid) {
-        drawIcon(*wxIcon(wx.code, wx.isDay), 191, 144, 32, cPanel);
+        drawIcon(*wxIcon(wx.code, wx.isDay), 191, 143, 40, cPanel);
         snprintf(ib, sizeof ib, "%d%c", (int)roundf(wx.temp), 0xB0);
         drawText(F_VAL, ib, 191, 196, AL_C, cText, cPanel, 62);
         snprintf(ib, sizeof ib, "%d%%", wx.hum);
@@ -725,8 +739,8 @@ void renderWeather() {
   char tb[24];
   if (vWeather == 1) {                                   // card
     drawRRect(6, 6, 228, 228, 32, cPanel, cBg);
-    drawIcon(*wxIcon(wx.code, wx.isDay), 42, 44, 32, cPanel);
-    drawText(F_TXT, wxShort(wx.code, wx.isDay), 70, 52, AL_L, cText, cPanel);
+    drawIcon(*wxIcon(wx.code, wx.isDay), 44, 44, 40, cPanel);
+    drawText(F_TXT, wxShort(wx.code, wx.isDay), 76, 52, AL_L, cAccent, cPanel);
     snprintf(tb, sizeof tb, "%d", (int)roundf(wx.temp));
     int w = drawText(F_TIME, tb, 26, 146, AL_L, cText, cPanel);
     char u[3] = {(char)0xB0, cfg.fahrenheit ? 'F' : 'C', 0};
@@ -748,8 +762,8 @@ void renderWeather() {
     return;
   }
   if (vWeather == 2) {                                   // tiles
-    drawText(F_TXT, wxShort(wx.code, wx.isDay), 120, 24, AL_C, cDim, cBg);
-    drawIcon(*wxIcon(wx.code, wx.isDay), 50, 64, 64, cBg);
+    drawText(F_TXT, wxShort(wx.code, wx.isDay), 120, 24, AL_C, cAccent, cBg);
+    drawIcon(*wxIcon(wx.code, wx.isDay), 48, 62, 72, cBg);
     snprintf(tb, sizeof tb, "%d%c", (int)roundf(wx.temp), 0xB0);
     if (textW(F_TIME, tb) > 146) tb[strlen(tb) - 1] = 0;
     drawText(F_TIME, tb, 160, 92, AL_C, cText, cBg);
@@ -772,8 +786,8 @@ void renderWeather() {
     return;
   }
   if (vWeather == 3) {                                   // range: where "now" sits between today's low and high
-    drawIcon(*wxIcon(wx.code, wx.isDay), 30, 30, 32, cBg);
-    drawText(F_TXT, wxShort(wx.code, wx.isDay), 54, 38, AL_L, cDim, cBg);
+    drawIcon(*wxIcon(wx.code, wx.isDay), 32, 32, 40, cBg);
+    drawText(F_TXT, wxShort(wx.code, wx.isDay), 58, 38, AL_L, cAccent, cBg);
     snprintf(tb, sizeof tb, "%d%c", (int)roundf(wx.temp), 0xB0);
     if (textW(F_TIME, tb) > 146) tb[strlen(tb) - 1] = 0;
     drawText(F_TIME, tb, 120, 114, AL_C, cText, cBg);
@@ -799,9 +813,9 @@ void renderWeather() {
     return;
   }
   if (vWeather == 4) {                                   // hourly: now + next four hours, with temperature bars
-    drawIcon(*wxIcon(wx.code, wx.isDay), 30, 34, 32, cBg);
+    drawIcon(*wxIcon(wx.code, wx.isDay), 32, 34, 40, cBg);
     snprintf(tb, sizeof tb, "%d%c", (int)roundf(wx.temp), 0xB0);
-    drawText(F_VAL, tb, 54, 48, AL_L, cText, cBg, 70);
+    drawText(F_VAL, tb, 58, 48, AL_L, cText, cBg, 70);
     drawText(F_TXT, wxShort(wx.code, wx.isDay), 228, 46, AL_R, cDim, cBg);
     tft.fillRect(20, 62, 200, 1, cTrack);
     int hnow = -1;
@@ -823,7 +837,7 @@ void renderWeather() {
         else snprintf(lb, sizeof lb, "%d%s", (hh % 12) ? hh % 12 : 12, hh < 12 ? "AM" : "PM");
       }
       drawText(F_CAP, lb, cx, 92, AL_C, i == 0 ? cAccent : cDim, cBg);
-      drawIcon(*wxIcon(wx.hcode[i], wx.hday[i]), cx, 118, 32, cBg);
+      drawIcon(*wxIcon(wx.hcode[i], wx.hday[i]), cx, 118, 40, cBg);
       snprintf(tb, sizeof tb, "%d%c", hv[i], 0xB0);
       drawText(F_TXT, tb, cx, 162, AL_C, cText, cBg);
       int bh = hbase + (int)roundf(hk * (hv[i] - tmin));
@@ -835,7 +849,7 @@ void renderWeather() {
     snprintf(tb, sizeof tb, "%d%c", (int)roundf(wx.temp), 0xB0);
     if (textW(F_TIME, tb) > 140) tb[strlen(tb) - 1] = 0;
     drawText(F_TIME, tb, 16, 80, AL_L, cText, cBg);
-    drawIcon(*wxIcon(wx.code, wx.isDay), 192, 54, 64, cBg);
+    drawIcon(*wxIcon(wx.code, wx.isDay), 190, 56, 72, cBg);
     drawText(F_CAP, wxShort(wx.code, wx.isDay), 18, 108, AL_L, cAccent, cBg);
     const char* lab[4] = {"FEELS LIKE", "HUMIDITY", "WIND", "HIGH / LOW"};
     char val[4][20];
@@ -854,7 +868,7 @@ void renderWeather() {
   // forecast
   snprintf(tb, sizeof tb, "%s %c %d%%", wxShort(wx.code, wx.isDay), 0xB7, wx.hum);
   drawText(F_TXT, tb, 120, 30, AL_C, cDim, cBg);
-  drawIcon(*wxIcon(wx.code, wx.isDay), 48, 78, 64, cBg);
+  drawIcon(*wxIcon(wx.code, wx.isDay), 46, 76, 72, cBg);
   snprintf(tb, sizeof tb, "%d%c", (int)roundf(wx.temp), 0xB0);
   if (textW(F_TIME, tb) > 146) tb[strlen(tb) - 1] = 0;           // three-digit values: drop the degree sign
   drawText(F_TIME, tb, 162, 110, AL_C, cText, cBg);
@@ -863,12 +877,12 @@ void renderWeather() {
   if (timeValid()) { time_t n = time(nullptr); struct tm lt; localtime_r(&n, &lt); wd = lt.tm_wday; }
   for (int i = 0; i < 3; i++) {
     int cx = 48 + 72 * i;
-    if (wd >= 0) drawText(F_CAP, WDU[(wd + i) % 7], cx, 146, AL_C, cDim, cBg);
-    drawIcon(*wxIcon(wx.dcode[i], true), cx, 168, 32, cBg);
+    if (wd >= 0) drawText(F_CAP, WDU[(wd + i) % 7], cx, 142, AL_C, i == 0 ? cAccent : cDim, cBg);
+    drawIcon(*wxIcon(wx.dcode[i], true), cx, 163, 38, cBg);
     snprintf(tb, sizeof tb, "%d%c", (int)roundf(wx.dhi[i]), 0xB0);
-    drawText(F_VAL, tb, cx, 208, AL_C, cText, cBg);
+    drawText(F_VAL, tb, cx, 211, AL_C, cText, cBg);
     snprintf(tb, sizeof tb, "%d%c", (int)roundf(wx.dlo[i]), 0xB0);
-    drawText(F_TXT, tb, cx, 230, AL_C, cDim, cBg);
+    drawText(F_TXT, tb, cx, 233, AL_C, cDim, cBg);
   }
 }
 
@@ -975,6 +989,7 @@ static void toolTime(char* out, size_t n, uint32_t sec) {
 }
 
 void renderTool(uint32_t now) {
+  cAccent = cAccSec[6];                                           // timer / stopwatch accent
   static int lastShown = -1, lastTenth = -1, lastSig = -1;
   static uint32_t lastFlash = 0;
   static bool inv = false;
@@ -982,16 +997,22 @@ void renderTool(uint32_t now) {
   toolFull = false;
   char tb[16];
   if (toolMode == TOOL_TIMER) {
-    if (tmRunning && (int32_t)(now - tmEndMs) >= 0) { tmRunning = false; tmDone = true; tmDoneAt = now; full = true; inv = false; }
-    if (tmDone) {                                                   // time is up: flash the screen
-      if (full || now - lastFlash >= 500) {
-        lastFlash = now; inv = !inv;
-        uint16_t bg = inv ? cAccent : cBg, fg = inv ? onColor(cAccent) : cText;
-        tft.fillScreen(bg);
-        drawText(F_TIME, "00:00", 120, 118, AL_C, fg, bg);
-        drawText(F_TXT, "Time's up", 120, 166, AL_C, inv ? fg : cAccent, bg);
+    if (tmRunning && (int32_t)(now - tmEndMs) >= 0) { tmRunning = false; tmDone = true; tmDoneAt = now; full = true; inv = false; lastShown = -1; }
+    if (tmDone) {                                                   // time is up: flash for a minute, and keep counting how long ago it ended
+      uint32_t ago = now - tmDoneAt;
+      bool flashing = ago < 60000UL;
+      int secAgo = (int)(ago / 1000);
+      if (full || (flashing && now - lastFlash >= 500) || (!flashing && secAgo != lastShown)) {
+        bool refill = flashing || full;
+        lastFlash = now; lastShown = secAgo; inv = flashing ? !inv : false;
+        uint16_t bg = inv ? cAccent : cBg, fg = inv ? onColor(cAccent) : cText, sub = inv ? fg : cAccent;
+        char eb[12]; snprintf(eb, sizeof eb, "%02d:%02d", min(secAgo / 60, 99), secAgo % 60);
+        if (refill) tft.fillScreen(bg);
+        drawText(F_TXT, "Time's up", 120, 62, AL_C, sub, bg);
+        drawText(F_TIME, eb, 120, 142, AL_C, fg, bg, TIME_PAD);
+        drawText(F_CAP, "AGO", 120, 174, AL_C, inv ? fg : cDim, bg);
       }
-      if (now - tmDoneAt > 60000UL) closeTool();
+      if (ago > 3600000UL) closeTool();                             // forget it after an hour
       return;
     }
     uint32_t leftMs = tmRunning ? (uint32_t)(tmEndMs - now) : tmLeftMs;
@@ -1072,12 +1093,13 @@ static void periodInfo(int which, const struct tm& t, Per& p) {  // which: 0 day
 static int pctOf(float f) { int p = (int)(f * 100); return p < 0 ? 0 : (p > 100 ? 100 : p); }
 
 // One watch-style box: label + percentage on the left, what is left on the right, a progress bar at the bottom.
-static void watchBox(int y, uint16_t col, bool solid, const char* label, float frac, const char* rlabel, const char* rval) {
+static void watchBox(int y, uint16_t col, int mode, const char* label, float frac, const char* rlabel, const char* rval) {
   const int x = 6, w = 228, h = 74, r = 22;
-  uint16_t box = solid ? col : blendPct(col, cBg, 20);
-  uint16_t tx = solid ? onColor(col) : cText;
-  uint16_t lab = solid ? blendPct(tx, col, 80) : col;
-  uint16_t track = solid ? blendPct(tx, col, 28) : blendPct(col, cBg, 38);
+  bool solid = (mode == 0), panel = (mode == 2);                    // 0 solid color box, 1 tinted box, 2 neutral panel with colored text + bar
+  uint16_t box = solid ? col : (panel ? cPanel : blendPct(col, cBg, 20));
+  uint16_t tx = solid ? onColor(col) : (panel ? col : cText);
+  uint16_t lab = solid ? blendPct(tx, col, 80) : (panel ? blendPct(col, cPanel, 75) : col);
+  uint16_t track = solid ? blendPct(tx, col, 28) : (panel ? cTrack : blendPct(col, cBg, 38));
   uint16_t fill = solid ? tx : col;
   bool left = cfg.progLeft;
   int pc = pctOf(frac); if (left) pc = 100 - pc;
@@ -1094,14 +1116,14 @@ static void watchBox(int y, uint16_t col, bool solid, const char* label, float f
   drawRRect(x + 18, y + 61, w - 36, 7, 3, track, box);
   drawRRect(x + 18, y + 61, max(7, (int)((w - 36) * shown)), 7, 3, fill, track);
 }
-static void progBoxes(bool solid, const struct tm& t) {          // year (box 1), month (box 2), day (box 3)
+static void progBoxes(int mode, const struct tm& t) {          // year (box 1), month (box 2), day (box 3)
   clearScreen();
   char rv[12];
   for (int i = 0; i < 3; i++) {
     int which = 2 - i;                                             // year, month, day
     Per p; periodInfo(which, t, p);
     if (which == 0) snprintf(rv, sizeof rv, "%d:%02d", p.left / 60, p.left % 60); else snprintf(rv, sizeof rv, "%d", p.left);
-    watchBox(6 + 78 * i, cPg[i], solid, p.label, p.frac, which == 0 ? "HOURS LEFT" : "DAYS LEFT", rv);
+    watchBox(6 + 78 * i, cPg[i], mode, p.label, p.frac, which == 0 ? "HOURS LEFT" : "DAYS LEFT", rv);
   }
 }
 
@@ -1117,17 +1139,26 @@ static void progDots(int which, const struct tm& t) {             // one square 
   Per p; periodInfo(which, t, p);
   uint16_t col = cPg[2 - which];                                   // year = color 1, month = color 2, day = color 3
   int pc = pctOf(p.frac); if (cfg.progLeft) pc = 100 - pc;
-  char b[40];
+  char b[40], l[28];
+  if (which == 0) snprintf(l, sizeof l, "%dh %02dm left", p.left / 60, p.left % 60);
+  else if (p.left == 0) strcpy(l, "Last day");
+  else if (p.left == 1) strcpy(l, "1 day left");
+  else snprintf(l, sizeof l, "%d days left", p.left);
+  snprintf(b, sizeof b, "%d%% %s", pc, cfg.progLeft ? "left" : "done");
+  if (which == 2) {                                                // the whole year: 22 x 17 squares fill the screen
+    drawText(F_CAP, p.label, 12, 22, AL_L, col, cBg);
+    drawText(F_TXT, b, 228, 24, AL_R, cText, cBg);
+    dotGrid(p.total, t.tm_yday, t.tm_yday, 22, 10, 34, 10, 8, false, col);
+    drawText(F_TXT, l, 12, 230, AL_L, cText, cBg);
+    char yo[20]; snprintf(yo, sizeof yo, "DAY %d", t.tm_yday + 1);
+    drawText(F_CAP, yo, 228, 229, AL_R, cDim, cBg);
+    return;
+  }
   drawText(F_CAP, p.label, 18, 30, AL_L, col, cBg);
-  snprintf(b, sizeof b, "%d%% %s", pc, cfg.progLeft ? "left" : "done"); drawText(F_TXT, b, 222, 32, AL_R, cText, cBg);
-  if (which == 2) dotGrid(p.total, t.tm_yday, t.tm_yday, 25, (240 - (25 * 8 - 2)) / 2, 62, 8, 6, false, col);
-  else if (which == 1) dotGrid(p.total, t.tm_mday - 1, t.tm_mday - 1, 7, (240 - (7 * 31 - 5)) / 2, 44, 31, 26, true, col);
+  drawText(F_TXT, b, 222, 32, AL_R, cText, cBg);
+  if (which == 1) dotGrid(p.total, t.tm_mday - 1, t.tm_mday - 1, 7, (240 - (7 * 31 - 5)) / 2, 44, 31, 26, true, col);
   else dotGrid(24, t.tm_hour, t.tm_hour, 12, (240 - (12 * 19 - 3)) / 2, 86, 19, 16, true, col);
-  if (which == 0) snprintf(b, sizeof b, "%dh %02dm left", p.left / 60, p.left % 60);
-  else if (p.left == 0) strcpy(b, "Last day");
-  else if (p.left == 1) strcpy(b, "1 day left");
-  else snprintf(b, sizeof b, "%d days left", p.left);
-  drawText(F_TXT, b, 120, 214, AL_C, cText, cBg);
+  drawText(F_TXT, l, 120, 214, AL_C, cText, cBg);
   drawText(F_CAP, p.of, 120, 233, AL_C, cDim, cBg);
 }
 
@@ -1167,6 +1198,8 @@ static const char* cdCaption(int days) { return days > 1 ? "days left" : days ==
 
 static void progCountdown(int st, const Event& e, const struct tm& t) {
   clearScreen();
+  static const uint16_t defEv[4] = {C565(255, 69, 58), C565(255, 159, 10), C565(48, 209, 88), C565(10, 132, 255)};
+  uint16_t ec = e.color[0] ? hexTo565(e.color) : defEv[(&e - cfg.ev) & 3];      // this event's color
   if (!eventValid(e)) {
     char hl[3][34];
     drawText(F_LBL, "No event set", 14, 90, AL_L, cText, cBg);
@@ -1183,7 +1216,7 @@ static void progCountdown(int st, const Event& e, const struct tm& t) {
     drawText(ad > 999 ? F_TIME : F_HUGE, b, 12, ad > 999 ? 100 : 114, AL_L, cText, cBg);
     drawText(F_LBL, cdCaption(c.days), 16, 152, AL_L, cDim, cBg);
     int nn = wrapLines(F_LBL, e.name, 212, nl, 2);
-    for (int i = 0; i < nn; i++) drawText(F_LBL, nl[i], 16, 192 + 36 * i, AL_L, cAccent, cBg);
+    for (int i = 0; i < nn; i++) drawText(F_LBL, nl[i], 16, 192 + 36 * i, AL_L, ec, cBg);
   } else if (st == 4) {                                            // sentence: "10 days / are left for / the exam"
     char A[24], B[34];
     if (c.days > 1) { snprintf(A, sizeof A, "%d days", c.days); strcpy(B, "are left for"); }
@@ -1195,36 +1228,37 @@ static void progCountdown(int st, const Event& e, const struct tm& t) {
     int lines = 1 + nb + nn, pitch = 38, y = (214 - lines * pitch) / 2 + 34;
     drawText(F_LBL, A, 14, y, AL_L, cText, cBg);
     for (int i = 0; i < nb; i++) drawText(F_LBL, hl[i], 14, y + pitch * (1 + i), AL_L, cDim, cBg);
-    for (int i = 0; i < nn; i++) drawText(F_LBL, nl[i], 14, y + pitch * (1 + nb + i), AL_L, cAccent, cBg);
+    for (int i = 0; i < nn; i++) drawText(F_LBL, nl[i], 14, y + pitch * (1 + nb + i), AL_L, ec, cBg);
     drawText(F_CAP, c.date, 16, 232, AL_L, cDim, cBg);
   } else if (st == 5) {                                            // boxes: days / hours / minutes in the three colors
     wrapLines(F_LBL, e.name, 212, nl, 1);
-    drawText(F_LBL, nl[0], 14, 44, AL_L, cAccent, cBg);
+    drawText(F_LBL, nl[0], 14, 44, AL_L, ec, cBg);
     drawText(F_CAP, c.date, 16, 66, AL_L, cDim, cBg);
     long rem = c.remMin < 0 ? 0 : c.remMin;
     int v[3] = {(int)(rem / 1440), (int)((rem % 1440) / 60), (int)(rem % 60)};
     static const char* const lb[3] = {"DAYS", "HOURS", "MINS"};
+    static const int bx[3] = {6, 102, 170}, bw[3] = {92, 64, 64};          // days gets the widest box (up to 3 digits)
     for (int i = 0; i < 3; i++) {
-      int x = 6 + 78 * i;
+      int x = bx[i], w = bw[i];
       uint16_t tx = onColor(cPg[i]);
-      drawRRect(x, 80, 72, 108, 20, cPg[i], cBg);
+      drawRRect(x, 80, w, 108, 20, cPg[i], cBg);
       snprintf(b, sizeof b, "%d", v[i]);
-      drawText(F_VAL, b, x + 36, 80 + 64, AL_C, tx, cPg[i]);
-      drawText(F_CAP, lb[i], x + 36, 80 + 92, AL_C, blendPct(tx, cPg[i], 80), cPg[i]);
+      drawText(F_VAL, b, x + w / 2, 80 + 64, AL_C, tx, cPg[i]);
+      drawText(F_CAP, lb[i], x + w / 2, 80 + 92, AL_C, blendPct(tx, cPg[i], 80), cPg[i]);
     }
     drawRRect(24, 204, 192, 10, 5, cTrack, cBg);
-    drawRRect(24, 204, max(10, (int)(192 * c.frac)), 10, 5, cAccent, cTrack);
+    drawRRect(24, 204, max(10, (int)(192 * c.frac)), 10, 5, ec, cTrack);
     snprintf(b, sizeof b, "%d%% OF THE WAY", pctOf(c.frac)); drawText(F_CAP, b, 120, 232, AL_C, cDim, cBg);
   } else {                                                         // bar: name, number, progress since the countdown started
     int nn = wrapLines(F_LBL, e.name, 212, nl, 2);
-    for (int i = 0; i < nn; i++) drawText(F_LBL, nl[i], 14, 38 + 36 * i, AL_L, cAccent, cBg);
+    for (int i = 0; i < nn; i++) drawText(F_LBL, nl[i], 14, 38 + 36 * i, AL_L, ec, cBg);
     drawText(F_CAP, c.date, 16, 38 + 36 * nn + 2, AL_L, cDim, cBg);
     snprintf(b, sizeof b, "%d", ad);
     int w1 = textW(F_TIME, b);
     drawText(F_TIME, b, 14, 168, AL_L, cText, cBg);
     drawText(F_TXT, cdCaption(c.days), 14 + w1 + 10, 168, AL_L, cDim, cBg);
     drawRRect(16, 190, 208, 16, 8, cTrack, cBg);
-    drawRRect(16, 190, max(16, (int)(208 * c.frac)), 16, 8, cAccent, cTrack);
+    drawRRect(16, 190, max(16, (int)(208 * c.frac)), 16, 8, ec, cTrack);
     snprintf(b, sizeof b, "%d%% OF THE WAY", pctOf(c.frac)); drawText(F_CAP, b, 16, 230, AL_L, cDim, cBg);
   }
 }
@@ -1242,8 +1276,9 @@ void renderProgress() {
   bool full = fullRedraw;
   if (!full && t.tm_min == lastMin) return;                        // nothing visible changes between minutes
   fullRedraw = false; lastMin = t.tm_min;
-  int st = vProg > 6 ? 0 : vProg, arg = vArg & 3;
-  if (st <= 1) progBoxes(st == 0, t);
+  int st = vProg > 7 ? 0 : vProg, arg = vArg & 3;
+  if (st <= 1) progBoxes(st, t);                                   // 0 solid, 1 tinted
+  else if (st == 7) progBoxes(2, t);                               // neutral panel
   else if (st == 2) progDots(arg > 2 ? 0 : arg, t);
   else progCountdown(st, cfg.ev[arg], t);                          // 3 big, 4 sentence, 5 boxes, 6 bar
 }
@@ -1504,7 +1539,7 @@ void mqttCb(char* topic, byte* pl, unsigned len) {
   char b[16]; len = min(len, 15u); memcpy(b, pl, len); b[len] = 0;
   int v = atoi(b);
   if (!strcmp(topic, tBrtSet)) { cfg.brightness = constrain(v, 0, 100); applyBrightness(); publishState(); }
-  else if (!strcmp(topic, tPageSet) && pageUsable(v)) { applyFaces(); setPage(v); }
+  else if (!strcmp(topic, tPageSet) && v >= 0 && v < PAGE_COUNT && (v != PAGE_GIF || gifOk)) { if (toolMode) closeTool(); applyFaces(); setPage(v); }   // 0 clock .. 5 progress
   else if (!strcmp(topic, tPlSet) && v >= 1 && v <= MAX_PL) { cfg.plActive = v - 1; cfg.mode = 5; if (PLN > 0) startPlaylist(); }   // Home Assistant: play playlist 1..4
   else if (!strcmp(topic, tGifNext)) { if (gifAdvance(false) && page != PAGE_GIF) setPage(PAGE_GIF); }
 }
@@ -1893,6 +1928,7 @@ void loop() {
   if (toolMode) { renderTool(now); delay(5); yield(); return; }     // timer / stopwatch own the display while active
   if (now >= nextWeather && page != PAGE_GIF) fetchWeather();
 
+  cAccent = cAccSec[page < 7 ? page : 0];                 // each section can have its own accent color
   switch (page) {
     case PAGE_CLOCK:   renderClock(); break;
     case PAGE_WEATHER: renderWeather(); break;

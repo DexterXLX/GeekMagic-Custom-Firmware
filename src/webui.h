@@ -69,6 +69,9 @@ ul.files .sel{color:var(--accent);font-weight:600}
 .pl input[type=text]{flex:1 1 130px;width:auto}
 .pl input[type=date],.pl input[type=time]{width:auto}
 .pl button{padding:6px 10px;min-width:36px}
+.cg{display:flex;align-items:center;gap:6px;flex-wrap:nowrap}
+.cg input.hex{width:92px;font-family:ui-monospace,Consolas,monospace;text-transform:uppercase}
+.seccol .sw{border-bottom:1px solid var(--line)}
 .sw{display:flex;flex-wrap:wrap;gap:8px;padding:2px 0 10px;border-bottom:1px solid var(--line)}
 .sw button{width:30px;height:30px;border-radius:50%;border:2px solid var(--line);cursor:pointer;padding:0}
 dl{display:grid;grid-template-columns:auto 1fr;gap:6px 16px;margin:8px 0}
@@ -184,6 +187,7 @@ dt{color:var(--dim)}dd{margin:0;text-align:right;font-variant-numeric:tabular-nu
           <option value="0">Humidity</option><option value="1">Wind</option><option value="2">High today</option>
         </select></label>
       <label><span>Seconds line at the top</span><input type="checkbox" data-k="showSeconds"></label>
+          <div class="seccol" data-sec="accClock" data-label="Clock accent color"></div>
     </fieldset>
     <fieldset><legend>Weather</legend>
       <label><span>Weather style<small>Forecast: three days. Hourly: next hours. Tiles, Range and List: details for today</small></span>
@@ -193,6 +197,7 @@ dt{color:var(--dim)}dd{margin:0;text-align:right;font-variant-numeric:tabular-nu
           <option value="4">Hourly</option><option value="5">List</option>
         </select></label>
       <p class="dim" style="margin:8px 0">Units (°C / °F) and your location are in the Location tab.</p>
+          <div class="seccol" data-sec="accWeather" data-label="Weather accent color"></div>
     </fieldset>
     <fieldset><legend>Calendar</legend>
       <label><span>Calendar style<small>Month grid, Tiles, or Focus (big day + small month)</small></span>
@@ -206,11 +211,12 @@ dt{color:var(--dim)}dd{margin:0;text-align:right;font-variant-numeric:tabular-nu
       <label><span>Show days of the neighbouring months<small>Dimmed</small></span><input type="checkbox" data-k="calOther"></label>
       <label><span>Clock in the calendar header</span><input type="checkbox" data-k="calClock"></label>
       <p class="dim" style="margin:8px 0">Show it with the Calendar button above, the Calendar checkbox in Pages, "Calendar only", or as a playlist item. Today uses your accent color.</p>
+          <div class="seccol" data-sec="accCal" data-label="Calendar accent color"></div>
     </fieldset>
     <fieldset><legend>Progress</legend>
       <label><span>Progress style<small>Watch boxes show year, month and day together. Dots shows one period. Countdown styles use your events below.</small></span>
         <select data-k="progStyle" data-num id="pstyle">
-          <option value="0">Watch boxes (solid)</option><option value="1">Watch boxes (tinted)</option><option value="2">Dots</option>
+          <option value="0">Watch boxes (solid)</option><option value="1">Watch boxes (tinted)</option><option value="7">Watch boxes (panel)</option><option value="2">Dots</option>
           <option value="3">Countdown: Big</option><option value="4">Countdown: Sentence</option>
           <option value="5">Countdown: Boxes</option><option value="6">Countdown: Bar</option>
         </select></label>
@@ -222,7 +228,7 @@ dt{color:var(--dim)}dd{margin:0;text-align:right;font-variant-numeric:tabular-nu
       <div class="sw" data-for="progC2"></div>
       <label><span>Day color</span><input type="color" data-k="progC3"></label>
       <div class="sw" data-for="progC3"></div>
-      <p class="dim" style="margin:8px 0">Show it with the Progress button, the Progress checkbox in Pages, "Progress only", or as a playlist item. The three colors are also used by Dots and by the countdown boxes.</p>
+      <p class="dim" style="margin:8px 0">Show it with the Progress button, the Progress checkbox in Pages, "Progress only", or as a playlist item. The three colors are also used by Dots and by the countdown boxes. "Panel" keeps a neutral box and colors only the text and the bar.</p>
     </fieldset>
     <fieldset><legend>Countdown events</legend>
       <p class="dim" style="margin:8px 0">Up to four. Type the name the way it should read in the sentence, for example "the exam" or "my flight" (English letters, digits and basic punctuation). "Count from" is optional; it defaults to the day you save.</p>
@@ -271,7 +277,11 @@ dt{color:var(--dim)}dd{margin:0;text-align:right;font-variant-numeric:tabular-nu
       <label><span>Topic prefix</span><input type="text" data-k="mqttTopic" maxlength="31"></label>
       <label><span>Add to Home Assistant automatically<small>Creates temperature, signal and brightness entities</small></span><input type="checkbox" data-k="haDiscovery"></label>
     </fieldset>
-    <p class="dim">Other commands: publish a number 0–3 to <code id="pt">smalltv/page/set</code> to switch pages.</p>
+    <p class="dim">Commands you can publish (your topic prefix is <code id="pt">smalltv</code>):<br>
+      <code>&hellip;/page/set</code> &ndash; 0 Clock, 1 Weather, 2 Status, 3 GIF, 4 Calendar, 5 Progress<br>
+      <code>&hellip;/playlist/set</code> &ndash; 1 to 4 plays that playlist<br>
+      <code>&hellip;/gif/next</code> &ndash; any message skips to the next GIF<br>
+      <code>&hellip;/brightness/set</code> &ndash; 0 to 100</p>
   </section>
 
   <section id="gifs">
@@ -304,6 +314,7 @@ dt{color:var(--dim)}dd{margin:0;text-align:right;font-variant-numeric:tabular-nu
         <button class="btn" id="tstop" type="button">Cancel</button>
       </div>
       <p class="dim" id="tstat">No timer running</p>
+          <div class="seccol" data-sec="accTool" data-label="Timer and stopwatch color"></div>
     </fieldset>
     <fieldset><legend>Stopwatch</legend>
       <div class="row">
@@ -353,21 +364,24 @@ $$('#tabs button').forEach(b=>b.onclick=()=>{$$('#tabs button').forEach(x=>x.set
 
 /* progress style + countdown events */
 const PERIODS=['Day','Month','Year'];
+const EVDEF=['#ff453a','#ff9f0a','#30d158','#0a84ff'],EVPAL=['#ff453a','#ff9f0a','#ffd60a','#30d158','#64d2ff','#0a84ff','#bf5af2','#ff375f'];
 let evs=[];
 const esc=t=>String(t).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const evName=i=>(evs[i]&&evs[i].n)?evs[i].n:('Event '+(i+1));
-function argOptions(face){return face<=1?[]:(face===2?PERIODS:[0,1,2,3].map(evName))}
+function argOptions(face){return (face<=1||face===7)?[]:(face===2?PERIODS:[0,1,2,3].map(evName))}
 function syncArg(sel){const f=+$('#pstyle').value,a=argOptions(f),s=$('#parg');s.innerHTML=a.length?opts(a,Math.min(sel,a.length-1)):'<option value="0">-</option>';s.disabled=!a.length;if(a.length)s.value=Math.min(sel,a.length-1)}
 $('#pstyle').addEventListener('change',()=>syncArg(0));
 const d2s=(y,m,d)=>y?`${y}-${String(m).padStart(2,'0')}-${String(d).padStart(2,'0')}`:'';
 const days2s=n=>n?new Date(n*86400000).toISOString().slice(0,10):'';
 const s2days=t=>{const m=/^(\d+)-(\d+)-(\d+)$/.exec(t);return m?Math.round(Date.UTC(+m[1],+m[2]-1,+m[3])/86400000):0};
-function initEvs(){evs=[0,1,2,3].map(i=>{const q=(cfg.ev||[])[i]||{};return{n:q.n||'',y:q.y||0,m:q.m||0,d:q.d||0,h:q.h||0,i:q.i||0,s:q.s||0}});renderEvs()}
+function initEvs(){evs=[0,1,2,3].map(i=>{const q=(cfg.ev||[])[i]||{};return{n:q.n||'',y:q.y||0,m:q.m||0,d:q.d||0,h:q.h||0,i:q.i||0,s:q.s||0,c:q.c||EVDEF[i]}});renderEvs()}
 function renderEvs(){
   const box=$('#evlist');box.innerHTML='';
   evs.forEach((e,k)=>{
     const d=document.createElement('div');d.className='pl';
-    d.innerHTML=`<span class="n">${k+1}</span><input type="text" class="en" maxlength="23" placeholder="the exam" value="${esc(e.n)}" aria-label="Name"><input type="date" class="ed" value="${d2s(e.y,e.m,e.d)}" aria-label="Date"><input type="time" class="et" value="${String(e.h).padStart(2,'0')}:${String(e.i).padStart(2,'0')}" aria-label="Time"><label class="dim" style="border:0;padding:0;gap:6px;justify-content:flex-start">Count from <input type="date" class="es" value="${days2s(e.s)}" aria-label="Count from"></label><button class="btn" type="button">Clear</button>`;
+    d.innerHTML=`<span class="n">${k+1}</span><input type="text" class="en" maxlength="23" placeholder="the exam" value="${esc(e.n)}" aria-label="Name"><input type="date" class="ed" value="${d2s(e.y,e.m,e.d)}" aria-label="Date"><input type="time" class="et" value="${String(e.h).padStart(2,'0')}:${String(e.i).padStart(2,'0')}" aria-label="Time"><label class="dim" style="border:0;padding:0;gap:6px;justify-content:flex-start">Count from <input type="date" class="es" value="${days2s(e.s)}" aria-label="Count from"></label><input type="color" class="ec" value="${esc(e.c||EVDEF[k])}" aria-label="Event color"><button class="btn" type="button">Clear</button>`;
+    const ci=d.querySelector('.ec');addHex(ci);ci.addEventListener('input',()=>{e.c=ci.value;dirty=true});
+    const sw=document.createElement('span');sw.style.cssText='display:flex;gap:6px;flex-basis:100%;padding-left:28px';EVPAL.forEach(c=>{const b=document.createElement('button');b.type='button';b.style.cssText='width:22px;height:22px;border-radius:50%;border:2px solid var(--line);cursor:pointer;padding:0;background:'+c;b.setAttribute('aria-label','Use '+c);b.onclick=()=>{ci.value=c;ci.dispatchEvent(new Event('input',{bubbles:true}))};sw.appendChild(b)});d.appendChild(sw);
     d.querySelector('.en').oninput=x=>{e.n=x.target.value;dirty=true;syncArg(+$('#parg').value||0);if(typeof renderList==='function')renderList()};
     d.querySelector('.ed').onchange=x=>{const m=/^(\d+)-(\d+)-(\d+)$/.exec(x.target.value);e.y=m?+m[1]:0;e.m=m?+m[2]:0;e.d=m?+m[3]:0;if(!d.querySelector('.es').value)e.s=0;dirty=true};
     d.querySelector('.et').onchange=x=>{const m=/^(\d+):(\d+)$/.exec(x.target.value);e.h=m?+m[1]:0;e.i=m?+m[2]:0;dirty=true};
@@ -379,7 +393,7 @@ function renderEvs(){
 
 /* playlists */
 const PGN=['Clock','Weather','Status','GIF','Calendar','Progress'];
-const FACES=[['Classic','Accent','Cards','Stacked','Day progress','Glance','Week','Sidebar','Date'],['Forecast','Card','Tiles','Range','Hourly','List'],[],[],['Month','Tiles','Focus'],['Watch boxes (solid)','Watch boxes (tinted)','Dots','Countdown: Big','Countdown: Sentence','Countdown: Boxes','Countdown: Bar']];
+const FACES=[['Classic','Accent','Cards','Stacked','Day progress','Glance','Week','Sidebar','Date'],['Forecast','Card','Tiles','Range','Hourly','List'],[],[],['Month','Tiles','Focus'],['Watch boxes (solid)','Watch boxes (tinted)','Dots','Countdown: Big','Countdown: Sentence','Countdown: Boxes','Countdown: Bar','Watch boxes (panel)']];
 let pls=[],plSel=0,plAct=0;
 const opts=(a,sel)=>a.map((n,i)=>`<option value="${i}"${i===sel?' selected':''}>${n}</option>`).join('');
 function initPls(){
@@ -410,21 +424,50 @@ function renderList(){
 }
 $('#padd').onclick=()=>{const L=pls[plSel].l;if(L.length>=10){toast('Up to 10 items per playlist');return}L.push({p:L.length&&L[L.length-1].p===0?1:0,s:0,a:0,t:10});dirty=true;renderList();renderTabs(false)};
 
+/* color codes (type #RRGGBB next to every color box) + section colors */
+const SECINH={};
+function addHex(inp){
+  if(inp._hex)return;
+  let w=inp.parentNode;
+  if(!w.classList.contains('cg')){const c=document.createElement('span');c.className='cg';w.insertBefore(c,inp);c.appendChild(inp);w=c}
+  const t=document.createElement('input');t.type='text';t.className='hex';t.maxLength=7;t.placeholder='#RRGGBB';t.setAttribute('aria-label','Color code');t.value=inp.value.toUpperCase();
+  inp.addEventListener('input',()=>{t.value=inp.value.toUpperCase()});
+  t.addEventListener('input',()=>{let v=t.value.trim();if(v&&v[0]!=='#')v='#'+v;if(/^#[0-9a-fA-F]{6}$/.test(v)){inp.value=v.toLowerCase();inp.dispatchEvent(new Event('input',{bubbles:true}))}});
+  inp.after(t);inp._hex=t;
+}
+const syncHex=()=>$$('input[type=color]').forEach(i=>{if(i._hex)i._hex.value=i.value.toUpperCase()});
+function secNote(k){const b=$('.seccol[data-sec='+k+']');if(b)b.querySelector('small').textContent=SECINH[k]!==false?'Using the main accent':'Your own color'}
+function buildSecCols(){
+  $$('.seccol').forEach(box=>{
+    const k=box.dataset.sec;
+    box.innerHTML=`<label><span>${box.dataset.label}<small></small></span><span class="cg"><input type="color" data-sec-in="${k}"><button class="btn" type="button">Main accent</button></span></label><div class="sw" data-for="${k}"></div>`;
+    const inp=box.querySelector('input'),btn=box.querySelector('button');
+    inp.addEventListener('input',()=>{SECINH[k]=false;dirty=true;secNote(k)});
+    btn.onclick=()=>{SECINH[k]=true;inp.value=$('[data-k=accent]').value;if(inp._hex)inp._hex.value=inp.value.toUpperCase();dirty=true;secNote(k)};
+    secNote(k);
+  });
+}
+function loadSec(){$$('.seccol').forEach(box=>{const k=box.dataset.sec,inp=box.querySelector('input');SECINH[k]=!cfg[k];inp.value=cfg[k]||cfg.accent||'#ff6b57';secNote(k)})}
+function followMain(h){$$('.seccol').forEach(box=>{const k=box.dataset.sec;if(SECINH[k]!==false){const inp=box.querySelector('input');inp.value=h.toLowerCase();if(inp._hex)inp._hex.value=h.toUpperCase()}})}
+buildSecCols();
+
 /* color swatches */
 const PRESET=['#FF6B57','#FF9F0A','#FFD60A','#A3E635','#30D158','#2DD4BF','#64D2FF','#0A84FF','#BF5AF2','#FF375F','#FFFFFF'];
-$$('.sw').forEach(box=>{const k=box.dataset.for;PRESET.forEach(c=>{const b=document.createElement('button');b.type='button';b.style.background=c;b.setAttribute('aria-label','Use '+c);b.onclick=()=>{const i=$('[data-k='+k+']');i.value=c.toLowerCase();i.dispatchEvent(new Event('input',{bubbles:true}));if(k==='accent')setAccent(c)};box.appendChild(b)})});
+$$('.sw').forEach(box=>{const k=box.dataset.for;PRESET.forEach(c=>{const b=document.createElement('button');b.type='button';b.style.background=c;b.setAttribute('aria-label','Use '+c);b.onclick=()=>{const i=$('[data-k='+k+'],[data-sec-in='+k+']');i.value=c.toLowerCase();i.dispatchEvent(new Event('input',{bubbles:true}));if(k==='accent')setAccent(c)};box.appendChild(b)})});
+
+$$('input[type=color]').forEach(addHex);
 
 /* accent */
-function setAccent(h){document.documentElement.style.setProperty('--accent',h);const n=parseInt(h.slice(1),16),r=n>>16,g=n>>8&255,b=n&255;document.documentElement.style.setProperty('--on-accent',(r*299+g*587+b*114)/1000>150?'#0B1220':'#FFFFFF')}
+function setAccent(h){if(typeof followMain==='function')followMain(h);document.documentElement.style.setProperty('--accent',h);const n=parseInt(h.slice(1),16),r=n>>16,g=n>>8&255,b=n&255;document.documentElement.style.setProperty('--on-accent',(r*299+g*587+b*114)/1000>150?'#0B1220':'#FFFFFF')}
 
 /* config */
 function fill(){
   $$('[data-k]').forEach(e=>{const v=cfg[e.dataset.k];if(v===undefined)return;if(e.type==='checkbox')e.checked=!!v;else if(e.type!=='password')e.value=v});
   $$('[data-bit]').forEach(e=>e.checked=(cfg.pages&e.dataset.bit)>0);
   const o=[...$('#tzpreset').options].find(x=>x.value===cfg.tz);$('#tzpreset').value=o?o.value:'';
-  setAccent(cfg.accent||'#2DD4BF');$('#pt').textContent=(cfg.mqttTopic||'smalltv')+'/page/set';
+  setAccent(cfg.accent||'#2DD4BF');$('#pt').textContent=(cfg.mqttTopic||'smalltv');
 }
-async function loadCfg(){cfg=await api('/api/config');fill();initEvs();initPls();syncArg(cfg.progArg||0)}
+async function loadCfg(){cfg=await api('/api/config');fill();loadSec();initEvs();initPls();syncArg(cfg.progArg||0);syncHex()}
 $('#tzpreset').onchange=e=>{if(e.target.value)$('#tz').value=e.target.value};
 $('[data-k=accent]').oninput=e=>setAccent(e.target.value);
 $$('[data-k],[data-bit]').forEach(e=>e.addEventListener('input',()=>dirty=true));
@@ -433,6 +476,7 @@ async function saveAll(over){
   $$('[data-k]').forEach(e=>{const k=e.dataset.k;body[k]=e.type==='checkbox'?e.checked:(e.hasAttribute('data-num')?Number(e.value):e.value)});
   body.pages=$$('[data-bit]').reduce((a,e)=>a|(e.checked?+e.dataset.bit:0),0)||1;
   body.pl=pls;body.plActive=plAct;body.ev=evs;
+  $$('.seccol').forEach(box=>{const k=box.dataset.sec,inp=box.querySelector('input');body[k]=SECINH[k]!==false?'':inp.value});
   Object.assign(body,over||{});
   if(body.mode===5&&!pls[body.plActive].l.length){toast('Add at least one item to the playlist first');return}
   try{const r=await api('/api/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});dirty=false;toast(r.saved===false?'Applied, but not saved: storage unavailable':'Saved');await loadCfg()}catch(e){toast(e.message)}

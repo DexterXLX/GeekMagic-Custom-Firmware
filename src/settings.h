@@ -6,7 +6,7 @@
 // ---- Hardware (verify against your board!) ----
 #define BL_PIN        5      // backlight, PWM
 #define BL_ACTIVE_LOW 1      // 1 = LOW turns the backlight on
-#define FW_VERSION    "2.1.0"
+#define FW_VERSION    "2.2.0"
 #define CONFIG_PATH   "/smalltv_cfg.json"   // own name: never touches the stock firmware's /config.json
 #define GIF_DIR       "/image"   // same folder the stock firmware uses for GIFs
 #define GIF_DIR2      "/gif"     // also searched, in case stock GIFs live here
@@ -23,6 +23,7 @@ struct Event {                          // a custom countdown ("the exam", "my f
   char name[24] = "";
   uint16_t y = 0; uint8_t mo = 0, d = 0, h = 0, mi = 0;   // y = 0 means "not set"
   int32_t startDay = 0;                 // days since 1970 the countdown started from (0 = set to today when saved)
+  char color[8] = "";                   // this event's own color ("" = a default per event)
 };
 
 struct Settings {
@@ -69,9 +70,10 @@ struct Settings {
   char     weekendColor[8] = "#FF6B57";
   bool     calOther      = true;            // show the neighbouring months' days, dimmed
   bool     calClock      = true;            // small clock in the calendar header
-  uint8_t  progStyle     = 0;               // 0 boxes (solid), 1 boxes (tinted), 2 dots, 3 countdown big, 4 sentence, 5 boxes, 6 bar
+  uint8_t  progStyle     = 0;               // 0 boxes (solid), 1 boxes (tinted), 2 dots, 3 countdown big, 4 sentence, 5 boxes, 6 bar, 7 boxes (panel)
   uint8_t  progArg       = 0;               // dots: 0 day, 1 month, 2 year. Countdown faces: event 0..3
   char     progC[3][8]   = {"#FF453A", "#FF9F0A", "#30D158"};   // year, month, day colors
+  char     accSec[7][8]  = {"", "", "", "", "", "", ""};        // own accent per section: clock, weather, -, -, calendar, progress, timer ("" = main accent)
   bool     progLeft      = false;           // show the percentage that is LEFT instead of the percentage done
   Event    ev[4];
   bool     gifAuto       = false;           // play every GIF in turn instead of looping one
@@ -126,12 +128,17 @@ inline void settingsFromJson(Settings& s, JsonVariantConst v) {
   if (!v["calWeekend"].isNull())   s.calWeekend = v["calWeekend"];
   if (!v["calOther"].isNull())     s.calOther = v["calOther"];
   if (!v["calClock"].isNull())     s.calClock = v["calClock"];
-  if (!v["progStyle"].isNull())    s.progStyle = constrain((int)v["progStyle"], 0, 6);
+  if (!v["progStyle"].isNull())    s.progStyle = constrain((int)v["progStyle"], 0, 7);
   if (!v["progArg"].isNull())      s.progArg = constrain((int)v["progArg"], 0, 3);
   if (!v["progLeft"].isNull())     s.progLeft = v["progLeft"];
   copyStr(s.progC[0], sizeof(s.progC[0]), v["progC1"]);
   copyStr(s.progC[1], sizeof(s.progC[1]), v["progC2"]);
   copyStr(s.progC[2], sizeof(s.progC[2]), v["progC3"]);
+  copyStr(s.accSec[0], sizeof(s.accSec[0]), v["accClock"]);
+  copyStr(s.accSec[1], sizeof(s.accSec[1]), v["accWeather"]);
+  copyStr(s.accSec[4], sizeof(s.accSec[4]), v["accCal"]);
+  copyStr(s.accSec[5], sizeof(s.accSec[5]), v["accProg"]);
+  copyStr(s.accSec[6], sizeof(s.accSec[6]), v["accTool"]);
   JsonArrayConst evs = v["ev"].as<JsonArrayConst>();
   if (!evs.isNull()) {
     int ei = 0;
@@ -142,6 +149,7 @@ inline void settingsFromJson(Settings& s, JsonVariantConst v) {
       e.y = constrain((int)(q["y"] | 0), 0, 2100); e.mo = constrain((int)(q["m"] | 0), 0, 12); e.d = constrain((int)(q["d"] | 0), 0, 31);
       e.h = constrain((int)(q["h"] | 0), 0, 23); e.mi = constrain((int)(q["i"] | 0), 0, 59);
       e.startDay = q["s"] | 0;
+      copyStr(e.color, sizeof(e.color), q["c"]);
     }
   }
   if (!v["gifAuto"].isNull())      s.gifAuto = v["gifAuto"];
@@ -197,10 +205,11 @@ inline void settingsToJson(const Settings& s, JsonDocument& d, bool includeSecre
   d["pageDots"] = s.pageDots;
   d["progStyle"] = s.progStyle;         d["progArg"] = s.progArg;         d["progLeft"] = s.progLeft;
   d["progC1"] = s.progC[0]; d["progC2"] = s.progC[1]; d["progC3"] = s.progC[2];
+  d["accClock"] = s.accSec[0]; d["accWeather"] = s.accSec[1]; d["accCal"] = s.accSec[4]; d["accProg"] = s.accSec[5]; d["accTool"] = s.accSec[6];
   JsonArray evs = d["ev"].to<JsonArray>();
   for (int i = 0; i < 4; i++) {
     JsonObject q = evs.add<JsonObject>(); const Event& e = s.ev[i];
-    q["n"] = e.name; q["y"] = e.y; q["m"] = e.mo; q["d"] = e.d; q["h"] = e.h; q["i"] = e.mi; q["s"] = e.startDay;
+    q["n"] = e.name; q["y"] = e.y; q["m"] = e.mo; q["d"] = e.d; q["h"] = e.h; q["i"] = e.mi; q["s"] = e.startDay; q["c"] = e.color;
   }
   d["calStyle"] = s.calStyle;           d["calMon"] = s.calMon;           d["calWeekend"] = s.calWeekend;
   d["weekendColor"] = s.weekendColor;   d["calOther"] = s.calOther;         d["calClock"] = s.calClock;

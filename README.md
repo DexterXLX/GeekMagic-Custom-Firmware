@@ -1,97 +1,124 @@
-# 📺 GeekMagic Small TV - Custom Modern Firmware
+# SmallTV modern firmware (ESP8266, 240x240 ST7789)
 
-![Platform](https://img.shields.io/badge/Platform-ESP8266-blue)
-![Display](https://img.shields.io/badge/Display-ST7789%20240x240-green)
-![Build](https://img.shields.io/badge/Build-PlatformIO-orange)
-![Status](https://img.shields.io/badge/Status-Tested%20%26%20Working-success)
+![UI preview](ui-preview.png)
 
-A custom modern firmware specifically designed and tested for the **GeekMagic Small TV** (and Ultra variants) desktop gadgets featuring an ESP8266 processor and a 240x240 ST7789 display.
+*Every screen above is rendered by the firmware's own drawing code (see `ui-preview.png`).*
 
-![UI Preview](ui-preview.png) 
+**Status: written but NOT compiled for the device or tested on hardware.** The drawing and screen code was compiled and run on a
+computer against a fake display (that is what `ui-preview.png` shows), but the rest still needs a real build. Expect to fix small
+build errors, and check the pin table below.
 
----
+## Why two files?
+The original firmware's updater only has room for a new firmware of about **524 KB**. So **SmallTV-Installer.bin** (small) goes on
+first through the original update page, then **SmallTV-Modern.bin** (full) goes on through the installer's page, which has more room.
 
-## ✨ Features
+## Memory safety ("ERROR[4] Not Enough Space")
+The build checks the size of each file against the exact limit of the page it will be uploaded through, and **fails with a clear
+message instead of producing a file that would not fit**. The log shows e.g. `SmallTV-Modern.bin: 612345 bytes. Limit ... (80 KB to
+spare)`. The installer page also shows "Largest file accepted now: X KB". Fonts and icons are stored compressed (~24 KB in total),
+and the unused OTA library and built-in fonts were removed, so this version is smaller than the previous one.
 
-### 🎨 The Look (Web UI: Display & Faces Tabs)
-The web interface is cleanly split between the **Display tab** (for display modes, playlists, and screen settings) and the **Faces tab** (for colors, clock, weather, calendar, and progress styles):
-- **Flicker-Free Rendering:** Everything is painted once, and only changed parts are repainted. No flicker or lag.
-- **Custom Typography & Icons:** Uses real fonts (Outfit Bold for numbers/labels, Poppins Medium for text) and flat icons (stored compressed at ~24 KB total to save space).
-- **Color Customization:** Pick your **accent color** and **time color** via a color box or quick swatches, alongside four base themes (Black, Midnight, Graphite, Light). Includes optional date, info blocks, seconds line, page dots, and 12/24h formats.
+## Get the files
+Upload this folder to GitHub (keep `.github`). The **Actions** tab builds both files; download the artifact `SmallTV-bins`.
+Or run `pio run` locally.
 
-### ⏱️ Clock & Weather Faces
-- **9 Clock Faces:** Classic, Accent, Cards, Stacked (hours over minutes), Day Progress, Glance (clock + one weather card), Week (clock + 7-day strip), Sidebar (stacked clock + date/weather panel), and Date (the date as the hero). Every face keeps related information grouped together.
-- **6 Weather Faces:** Forecast (now + 3 days), Card, Tiles (humidity, wind, high, low), Range (where "now" sits between today's low and high), Hourly (now + next 4 hours with bars), and List (big temperature + labeled rows).
-- **Accurate Visuals:** The range marker and hourly bars use the exact same rounded numbers printed on-screen (e.g., a 17° reading between 16° and 18° sits dead center, and equal temperatures produce equal bars).
+## Install (WiFi only, no wires)
+1. Open `http://<device-ip>/update` (original firmware). Under *Firmware* (not FileSystem) pick **SmallTV-Installer.bin**, press Update.
+   Wait about a minute. Do not unplug. The screen may go blank or white: normal at this step.
+2. The installer borrows the original firmware's WiFi login. Look for `smalltv-installer` in your router's list. If it can't join, it
+   opens a WiFi network `SmallTV-Installer-XXXXXX`: join it from your phone, open `192.168.4.1`, and enter your WiFi.
+3. Open the installer's address, click **Open the upload page**, pick **SmallTV-Modern.bin** under *Firmware*, press Update.
+4. Open the address shown on the screen (Status page) or `http://smalltv.local`, set location, time zone and style.
 
-### 📊 Progress & Countdowns (Faces Tab)
-Track time passing or count down to important milestones (repainted once a minute):
-- **Watch Boxes:** Three stacked boxes for **Year** (red), **Month** (orange), and **Day** (green)—each showing the percentage, time remaining (days, or hours for the current day), and a progress bar. Choose between *solid* or *tinted* boxes, customize all three colors, and toggle percentages between "done" and "left".
-- **Dots:** A visual grid displaying one square per day of the year, day of the month, or hour of the day (selectable between Day, Month, or Year).
-- **Countdowns:** Track up to **4 custom events** (name, date, time, and optional "count from" start date) across four styles:
-  - **Big:** A huge number that fills the screen.
-  - **Sentence:** Natural phrasing (e.g., *"10 days are left for the exam"*, *"One day is left for my flight"*, *"Today is..."*, or *"5 days have passed since..."*).
-  - **Boxes:** Days, hours, and minutes displayed in the three custom colors.
-  - **Bar:** A visual progress bar tracking time since your start date.
-- **Flexible Display:** Show it via the **Progress** button, the Progress checkbox under Pages, "Progress only" mode, or as a custom playlist item targeting a specific period or event.
+## The look (web UI: Display tab for modes/playlists/screen, Faces tab for colors, clock, weather and calendar)
+- **Clock faces (9):** Classic, Accent, Cards, Stacked (hours over minutes), Day progress, Glance (clock + one weather card),
+  Week (clock plus a seven-day strip), Sidebar (stacked clock + date/weather panel) and Date (the date as the hero).
+  Every face keeps related information together in one group.
+- The range marker and the hourly bars use the same rounded numbers that are printed on screen, so a 17° reading between 16° and 18°
+  sits exactly in the middle and equal temperatures give equal bars.
+- **Weather faces (6):** Forecast (now + three days), Card, Tiles (humidity, wind, high, low), Range (where "now" sits between
+  today's low and high), Hourly (now + next four hours with bars) and List (big temperature, then labelled rows).
+- **Colors:** four themes (Black, Midnight, Graphite, Light), a **main accent**, a **time color**, and **its own accent for each section**
+  (clock, weather, calendar, timer/stopwatch; pick one or press "Main accent" to follow the main one). Progress has its own year /
+  month / day colors and every countdown event has its own color. Every color box has a **color-code box** where you can type
+  `#RRGGBB`, plus quick swatches. Optional date, info blocks, seconds line, page dots, 12/24 h.
+- **Display mode:** rotate through pages or keep one page on screen. No header bar.
+- Text uses real fonts (Outfit Bold for numbers and labels, Poppins Medium for text) with flat icons. Everything is painted once and
+  then only changed parts are repainted, so there is no flicker or lag.
 
-### 📅 Calendar 
-A dedicated month calendar page with three distinct styles: **Month Grid**, **Tiles**, and **Focus** (big day number + small month).
-- **Customization:** Choose a Monday or Sunday start, pick a custom weekend color, and dim days from neighboring months.
-- **Header Clock:** Includes a small clock in the header and highlights today's date in your accent color. Show it via the Calendar button, page rotation, "Calendar only" mode, or inside a playlist.
+## Progress and countdowns (Faces tab)
+- **Watch boxes:** three stacked boxes - **year** (red), **month** (orange) and **day** (green) - each with the percentage, what is
+  left (days, or hours for the day) and a progress bar. Three looks: *solid* colored boxes, *tinted* boxes, and *panel* (a neutral
+  box like the Cards clock, with only the text and the bar colored). Choose all three colors yourself and switch the percentage
+  between "done" and "left".
+- **Dots:** one square per day of the **year** (22 x 17 squares that fill the screen), per day of the month, or per hour of the day.
+- **Countdowns:** enter up to four events (name, date, time, optional "count from" date, and **a color for each event**) and show
+  them as **Big** (a huge number that fills the screen), **Sentence** ("10 days / are left for / the exam", "One day is left for my
+  flight", "Today is ...", "5 days have passed since ..."), **Boxes** (days / hours / minutes) or **Bar** (progress since you started).
+  Type the name as it should read in the sentence, e.g. "the exam". Names use English letters, digits and basic punctuation.
+Show it with the **Progress** button, the Progress checkbox under Pages, "Progress only", or as a playlist item (an item can pick the
+period or the event, so a playlist can run through several events, each in its own color). Everything is repainted once a minute.
 
-### ⏳ Timer & Stopwatch (Timer Tab)
-Take over the screen when you need to focus or track time:
-- **Timer:** Start a countdown (use presets or custom minutes/seconds up to `99:59`) with Pause/Resume and Cancel. When a timer finishes, the screen flashes for up to a minute.
-- **Stopwatch:** Features Start, Stop, Lap (displays the last 3 laps), and Reset. 
-- Click **"Back to the normal display"** at any time to return to your regular pages or playlist.
+## Calendar
+A month calendar page with three styles (Month grid, Tiles, Focus = big day number + small month) and its own options in the
+Display tab: week starts on Monday or Sunday, weekend coloring with your own weekend color, dimmed days of the neighbouring months,
+and a small clock in the header. Today is highlighted in your accent color. Show it with the **Calendar** button, the Calendar
+checkbox under Pages, "Calendar only", or as an item in the playlist.
 
-### 🔀 Multiple Playlists (Custom Rotation)
-Set your Display Mode to **Custom Playlist** in the Display tab:
-- **Up to 4 Playlists:** Maintain up to four separate, renameable playlists with up to 10 items each. Switching between playlists is instant and costs zero performance.
-- **Granular Control:** Every item has its own page (Clock, Weather, Status, GIF, Calendar, or Progress), a specific face/event for that page, and a custom duration in seconds.
-  - *Example Playlist 1:* GIF (20s) ➔ Clock Date (20s).
-  - *Example Playlist 2:* Clock Glance (10s) ➔ Weather Hourly (5s) ➔ Weather Range (5s).
-- **Smart Home Integration (MQTT):** Publish `1`–`4` to `<topic>/playlist/set` via Home Assistant / MQTT to switch the active playlist remotely. (Standard even-rotation and single-page modes are also available).
+## Timer and stopwatch (Timer tab)
+Start a countdown (presets or any minutes/seconds up to 99:59) with Pause/Resume and Cancel, or a stopwatch with Start, Stop, Lap
+(the last three laps are shown) and Reset. They take over the screen while they run, in their own color. When a timer ends the
+screen flashes "Time's up" for a minute and **keeps counting how long ago it ended** (00:07 ago, 03:20 ago, ...) until you press
+"Back to the normal display" (or after an hour).
 
-### 🎬 GIF Support
-- **Upload & Play:** Upload as many GIFs as fit in memory. Pick one with **Use**, or press **Next GIF** to cycle through them alphabetically.
-- **Auto-Play / Loop:** Enable **Play all GIFs in turn** (GIFs tab) to automatically switch to the next GIF at the end of a loop once your chosen duration has elapsed.
-- **Smart Looping:** Loops maintain the GIF's native pacing, and the first frame is drawn in a single streamed pass to minimize pause at the loop point.
-- **Smart Home Integration (MQTT):** Publish anything to `<topic>/gif/next` via Home Assistant / MQTT to skip to the next GIF.
+## Playlists (custom rotation)
+Set **Display mode** to **Custom playlist** (Display tab). You can keep **up to four playlists** (rename them, 10 items each) and switch
+between them: pick a playlist tab, edit its items, then press **Save and play this playlist**. Every item has a page (Clock, Weather,
+Status, GIF, Calendar), a face for that page and its own number of seconds. Example: playlist 1 = GIF + Date for 20 s each, playlist 2 =
+Clock Glance 10 s + Weather Hourly 5 s + Weather Range 5 s. Playlists are only settings, so switching costs no performance.
+Home Assistant / MQTT: publish 1 to 4 to `<topic>/playlist/set` to play that playlist. A GIF item is skipped if no GIF is selected.
+The older modes still work (rotate pages evenly, or keep one page).
 
----
+## GIFs
+- Upload as many as fit; pick one with **Use**, or press **Next GIF** to skip to the next one (alphabetical, wraps around).
+- **Play all GIFs in turn** (GIFs tab): switches to the next GIF at the end of a loop once the chosen number of seconds has passed.
+- Home Assistant / MQTT: publish anything to `<topic>/gif/next` to skip to the next GIF.
+- Loops keep the GIF's own pace and the first frame is drawn in one streamed pass, so the pause at the loop point is much shorter.
 
-## 🚀 Installation (WiFi Only, OTA)
+## Updating later
+The full firmware is too big to replace itself: open its `/update`, upload **SmallTV-Installer.bin**, wait, open the installer's
+address, **Open the upload page**, upload the new **SmallTV-Modern.bin**. Settings and GIFs are kept.
 
-### Why Two Files? (Memory Safety)
-The original firmware's updater only has room for a new firmware of about **524 KB**. To prevent `"ERROR[4] Not Enough Space"`, updating uses a two-step process:
-1. **`SmallTV-Installer.bin`** (small) is flashed first via the original update page.
-2. **`SmallTV-Modern.bin`** (full) is flashed through the installer's page, which allocates more room.
+## Going back to the original
+Same steps, but send the original `FW-Smalltv-Ultra-V9_0_50.bin` from the installer's upload page. This firmware never formats the
+original's files; it uses its own settings file (`smalltv_cfg.json`).
 
-*Note: The build script strictly verifies each binary's size against the exact limit of the upload page and fails with a clear message rather than producing an oversized file. Unused OTA libraries and built-in fonts have been stripped out to maximize free space.*
+## Home Assistant / MQTT commands
+Publish to `<your topic>/...`: `page/set` = 0 Clock, 1 Weather, 2 Status, 3 GIF, 4 Calendar, 5 Progress (works for every page, not only the
+ones ticked under Pages); `playlist/set` = 1 to 4; `gif/next` = any message; `brightness/set` = 0 to 100.
 
-### Step-by-Step Guide
+## Safety net
+- **Recovery mode:** 3 restarts in a row without running for 3 minutes starts a minimal mode (WiFi + upload page, backlight
+  blinking). Press reset 3 times quickly to trigger it by hand. Upload SmallTV-Installer.bin there.
+- Still possible: power loss during an update's final copy can corrupt the image (needs a serial flash); a crash only after 3+
+  minutes of uptime does not trigger recovery mode; no password on the web pages.
+- A wrong pin setting is harmless: the screen may be blank, but WiFi and the web page still work.
 
-1. **Get the files:** Upload this repository to GitHub (keeping `.github`) and download the `SmallTV-bins` artifact from the **Actions** tab, or build locally by running `pio run`.
-2. **Flash the Installer:** Open `http://<device-ip>/update` on your stock firmware. Under *Firmware* (not FileSystem), select **`SmallTV-Installer.bin`** and press Update. Wait ~1 minute. Do not unplug. (A blank or white screen is normal at this step).
-3. **Connect to the Installer:** The installer automatically imports your stock WiFi credentials. Look for `smalltv-installer` on your router. If it can't connect, join the `SmallTV-Installer-XXXXXX` WiFi hotspot from your phone, open `192.168.4.1`, and enter your WiFi details.
-4. **Flash the Custom Modern Firmware:** Open the installer's IP address, click **Open the upload page**, select **`SmallTV-Modern.bin`** under *Firmware*, and press Update.
-5. **Setup:** Open the IP address shown on the device screen (Status page) or visit `http://smalltv.local` to configure your location, time zone, and display styles.
+## Hardware values to verify (unverified guesses)
+| Item | Used | Where |
+|---|---|---|
+| Display | ST7789 240x240 | `platformio.ini` |
+| MOSI / SCLK | GPIO13 / GPIO14 | fixed on ESP8266 |
+| DC / RST | GPIO0 / GPIO2 | `platformio.ini` |
+| CS | none (tied low) | |
+| Backlight | GPIO5, active low | `src/settings.h` |
 
----
+Swapped red/blue: add `-DTFT_RGB_ORDER=TFT_BGR`. Inverted colors: add `-DTFT_INVERSION_ON`.
+Garbled GIF colors: change `LITTLE_ENDIAN_PIXELS` to `BIG_ENDIAN_PIXELS` in `startGif()`.
 
-## 🔄 Updates & Maintenance
-
-### Updating to Newer Versions
-Because the full firmware is too large to overwrite itself directly:
-1. Open `http://<device-ip>/update` and upload `SmallTV-Installer.bin`.
-2. Wait for it to reboot, open the installer's address, click **Open the upload page**, and upload the new `SmallTV-Modern.bin`. 
-*(All your settings and uploaded GIFs are preserved).*
-
-### Reverting to Original Stock Firmware
-Follow the exact same two-step update process, but upload the original `FW-Smalltv-Ultra-V9_0_50.bin` from the installer's upload page. This firmware never formats the stock filesystem and stores its configuration separately in `smalltv_cfg.json`.
-
-### 🛡️ Safety Net & Recovery
-- **Recovery Mode:** 3 consecutive restarts without reaching 3 minutes of uptime automatically launches a minimal recovery mode (WiFi + upload page, blinking backlight). You can trigger this manually by pressing reset 3 times quickly, then uploading `SmallTV-Installer.bin`.
-- **Limitations:** Power loss during
+## Notes
+- Weather (Open-Meteo, no key) uses plain HTTP to save RAM. If it says "Needs HTTPS", uncomment `-DWEATHER_HTTPS=1`.
+- The original firmware's GIFs are read from `/image` (and `/gif`). The stock WiFi file format (`{"a":ssid,"p":password}`) was inferred
+  from the binary, so the automatic import is best-effort.
+- The web UI is embedded in `src/webui.h`. `src/fonts.h` and `src/icons.h` are generated files (compressed 4-bit alpha).
+- Fonts: Outfit Bold (The Outfit Project Authors) and Poppins Medium (Indian Type Foundry), both under the SIL Open Font License 1.1.
